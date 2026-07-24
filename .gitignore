@@ -1,0 +1,10 @@
+# OS files
+.DS_Store
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# clasp (Google Apps Script CLI)
+# ※.clasprc.jsonにはアクセストークンが含まれるため、絶対にコミットしないようにします
+.clasprc.json
