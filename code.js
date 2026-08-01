@@ -57,7 +57,6 @@ function importGmailReceipts() {
           
           // スプレッドシートへ行追加
           sheet.appendRow([
-            '未処理', 
             date, 
             formattedDate, // 取引日付の初期値として受信日を設定
             '', // 勘定科目 (手動入力用)
@@ -95,7 +94,6 @@ function importGmailReceipts() {
         
         // スプレッドシートへ行追加
         sheet.appendRow([
-          '未処理', 
           date, 
           formattedDate,
           '', 
@@ -116,13 +114,13 @@ function importGmailReceipts() {
   }
 }
 
-// H列にファイル名組み立て数式を設定するヘルパー関数
+// G列にファイル名組み立て数式を設定するヘルパー関数
 function setFilenameFormula(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
-  // H列(8列目)に数式を挿入: YYYY.MM.DD_勘定科目_取引先名_取引金額円_メモ.拡張子
-  const formula = `=IF(A${lastRow}="完了", "リネーム済", TEXT(C${lastRow}, "yyyy.MM.dd")&"_"&D${lastRow}&"_"&E${lastRow}&"_"&F${lastRow}&"円_"&G${lastRow})`;
-  sheet.getRange(lastRow, 8).setFormula(formula);
+  // G列(7列目)に数式を挿入: YYYY.MM.DD_勘定科目_取引先名_取引金額円_メモ
+  const formula = `=TEXT(B${lastRow}, "yyyy.MM.dd")&"_"&C${lastRow}&"_"&D${lastRow}&"_"&E${lastRow}&"円_"&F${lastRow}`;
+  sheet.getRange(lastRow, 7).setFormula(formula);
 }
 
 // ==========================================
@@ -140,7 +138,50 @@ function processConfirmedReceipts() {
   
   const folder = DriveApp.getFolderById(FOLDER_ID);
   
-  // マネーフォワード用CSVヘッダー
+  // 1. 未処理レコードのバリデーションチェック（1行でも未入力があれば停止）
+  const pendingRows = [];
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    const filenameVal = row[6]; // G列: ファイル名
+    
+    // 「リネーム済」ではない行を未処理とする
+    if (filenameVal !== 'リネーム済') {
+      const rowNum = i + 1;
+      const rawDate = row[1]; // B列: 取引日付
+      const debit = row[2];   // C列: 勘定科目
+      const vendor = row[3];  // D列: 取引先名
+      const amount = row[4];  // E列: 取引金額
+      const fileId = row[7];  // H列: ファイルID
+      
+      // まだファイルすら取り込まれていない行（fileIdが無い等）はスキップ
+      if (!fileId) continue;
+      
+      // 必須項目のいずれかが空の場合はエラーで止める
+      if (!rawDate || !debit || !vendor || amount === '') {
+        const errorMsg = `行 ${rowNum}: 必須情報（取引日付、勘定科目、取引先名、取引金額）が不足しています。すべての項目を入力してから再度実行してください。`;
+        Logger.log(errorMsg);
+        SpreadsheetApp.getUi().alert('入力エラー', errorMsg, SpreadsheetApp.getUi().ButtonSet.OK);
+        return;
+      }
+      
+      pendingRows.push({
+        rowNum: rowNum,
+        rawDate: rawDate,
+        debit: debit,
+        vendor: vendor,
+        amount: amount,
+        memo: row[5],   // F列: メモ
+        fileId: fileId
+      });
+    }
+  }
+  
+  if (pendingRows.length === 0) {
+    SpreadsheetApp.getUi().alert('確認', '未処理（未リネーム）のデータがありませんでした。', SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+  
+  // 2. マネーフォワード用CSVデータの準備
   const csvRows = [
     ["取引No", "取引日", "借方勘定科目", "借方補助科目", "借方部門", "借方取引先", "借方税区分", "借方インボイス", "借方金額(円)", "借方税額", "貸方勘定科目", "貸方補助科目", "貸方部門", "貸方取引先", "貸方税区分", "貸方インボイス", "貸方金額(円)", "貸方税額", "摘要", "仕訳メモ", "タグ", "MF仕訳タイプ", "決算整理仕訳", "作成日時", "作成者", "最終更新日時", "最終更新者"]
   ];
@@ -148,74 +189,58 @@ function processConfirmedReceipts() {
   let processedCount = 0;
   let csvTransactionNo = 1;
   
-  for (let i = 1; i < values.length; i++) {
-    const row = values[i];
-    const status = row[0]; // A列: ステータス
+  // 3. リネーム＆CSVデータ生成処理
+  for (let i = 0; i < pendingRows.length; i++) {
+    const item = pendingRows[i];
     
-    if (status === '確定') {
-      const rowNum = i + 1;
+    // 取引日付のフォーマット (YYYY/MM/DD)
+    const dateObj = new Date(item.rawDate);
+    const formattedDate = Utilities.formatDate(dateObj, Session.getScriptTimeZone(), 'yyyy/MM/dd');
+    const dotDate = Utilities.formatDate(dateObj, Session.getScriptTimeZone(), 'yyyy.MM.dd');
+    
+    try {
+      // -----------------------------
+      // ドライブ上のファイルリネーム
+      // -----------------------------
+      const file = DriveApp.getFileById(item.fileId);
+      const originalName = file.getName();
       
-      const rawDate = row[2]; // C列: 取引日付
-      const debit = row[3];   // D列: 勘定科目
-      const vendor = row[4];  // E列: 取引先名
-      const amount = row[5];  // F列: 取引金額
-      const memo = row[6];    // G列: メモ
-      const fileId = row[8];  // I列: ファイルID
+      // 拡張子の取得
+      const extMatch = originalName.match(/\.[^.]+$/);
+      const ext = extMatch ? extMatch[0] : '';
       
-      if (!rawDate || !debit || !vendor || !amount) {
-        Logger.log(`行 ${rowNum}: 必須情報（取引日付、勘定科目、取引先名、取引金額）が不足しているためスキップします。`);
-        continue;
-      }
+      // 新しいファイル名の作成: YYYY.MM.DD_勘定科目_取引先名_金額円_メモ.拡張子
+      const memoPart = item.memo ? `_${item.memo}` : '';
+      const newName = `${dotDate}_${item.debit}_${item.vendor}_${item.amount}円${memoPart}${ext}`;
       
-      // 取引日付のフォーマット (YYYY/MM/DD)
-      const dateObj = new Date(rawDate);
-      const formattedDate = Utilities.formatDate(dateObj, Session.getScriptTimeZone(), 'yyyy/MM/dd');
-      const dotDate = Utilities.formatDate(dateObj, Session.getScriptTimeZone(), 'yyyy.MM.dd');
+      file.setName(newName);
       
-      try {
-        // -----------------------------
-        // ドライブ上のファイルリネーム
-        // -----------------------------
-        const file = DriveApp.getFileById(fileId);
-        const originalName = file.getName();
-        
-        // 拡張子の取得
-        const extMatch = originalName.match(/\.[^.]+$/);
-        const ext = extMatch ? extMatch[0] : '';
-        
-        // 新しいファイル名の作成: YYYY.MM.DD_勘定科目_取引先名_金額円_メモ.拡張子
-        const memoPart = memo ? `_${memo}` : '';
-        const newName = `${dotDate}_${debit}_${vendor}_${amount}円${memoPart}${ext}`;
-        
-        file.setName(newName);
-        
-        // -----------------------------
-        // マネーフォワード用CSV行の生成
-        // -----------------------------
-        const csvRow = [
-          csvTransactionNo++,  // 取引No
-          formattedDate,       // 取引日 (YYYY/MM/DD)
-          debit,               // 借方勘定科目
-          "", "", "", "", "",  // 補助, 部門, 取引先, 税区分, インボイス (空欄)
-          amount,              // 借方金額
-          "",                  // 借方税額
-          "未払金",            // 貸方勘定科目 (未払金固定)
-          "", "", "", "", "",  // 補助, 部門, 取引先, 税区分, インボイス (空欄)
-          amount,              // 貸方金額
-          "",                  // 貸方税額
-          vendor,              // 摘要 (取引先名)
-          memo,                // 仕訳メモ (スプレッドシートのメモ)
-          "", "", "", "", "", "", "" // 残り空欄
-        ];
-        csvRows.push(csvRow);
-        
-        // ステータスを完了に変更
-        sheet.getRange(rowNum, 1).setValue('完了');
-        processedCount++;
-        
-      } catch (e) {
-        Logger.log(`行 ${rowNum} のファイルリネームに失敗しました: ` + e.toString());
-      }
+      // -----------------------------
+      // マネーフォワード用CSV行の生成
+      // -----------------------------
+      const csvRow = [
+        csvTransactionNo++,  // 取引No
+        formattedDate,       // 取引日 (YYYY/MM/DD)
+        item.debit,          // 借方勘定科目
+        "", "", "", "", "",  // 補助, 部門, 取引先, 税区分, インボイス (空欄)
+        item.amount,         // 借方金額
+        "",                  // 借方税額
+        "未払金",            // 貸方勘定科目 (未払金固定)
+        "", "", "", "", "",  // 補助, 部門, 取引先, 税区分, インボイス (空欄)
+        item.amount,         // 貸方金額
+        "",                  // 貸方税額
+        item.vendor,         // 摘要 (取引先名)
+        item.memo,           // 仕訳メモ (スプレッドシートのメモ)
+        "", "", "", "", "", "", "" // 残り空欄
+      ];
+      csvRows.push(csvRow);
+      
+      // G列（ファイル名）に「リネーム済」を直接上書き
+      sheet.getRange(item.rowNum, 7).setValue('リネーム済');
+      processedCount++;
+      
+    } catch (e) {
+      Logger.log(`行 ${item.rowNum} のファイルリネームに失敗しました: ` + e.toString());
     }
   }
   
@@ -249,8 +274,6 @@ function processConfirmedReceipts() {
       `${processedCount}件の領収書をリネームし、マネーフォワード用CSVを作成しました。\n\nCSVファイルURL:\n${csvFile.getUrl()}`, 
       SpreadsheetApp.getUi().ButtonSet.OK
     );
-  } else {
-    SpreadsheetApp.getUi().alert('確認', 'ステータスが「確定」になっているデータがありませんでした。', SpreadsheetApp.getUi().ButtonSet.OK);
   }
 }
 
@@ -261,6 +284,6 @@ function onOpen() {
   const ui = SpreadsheetApp.getUi();
   ui.createMenu('領収書管理')
     .addItem('Gmailから領収書を取込', 'importGmailReceipts')
-    .addItem('確定データのリネーム＆CSV出力', 'processConfirmedReceipts')
+    .addItem('未処理データのリネーム＆CSV出力', 'processConfirmedReceipts')
     .addToUi();
 }
