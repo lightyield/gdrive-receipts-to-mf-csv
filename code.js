@@ -8,7 +8,7 @@
 // ==========================================
 // 設定情報（ご自身の環境に合わせて書き換えてください）
 // ==========================================
-const FOLDER_ID = 'ここにGoogleドライブのフォルダIDを入力';
+const FOLDER_ID = PropertiesService.getScriptProperties().getProperty('FOLDER_ID');
 const TARGET_LABEL = '自動保存_処理待ち';
 const SUCCESS_LABEL = '自動保存_完了';
 
@@ -16,6 +16,10 @@ const SUCCESS_LABEL = '自動保存_完了';
 // 1. Gmailから領収書を取得してスプレッドシートに登録
 // ==========================================
 function importGmailReceipts() {
+  if (!FOLDER_ID) {
+    Logger.log('エラー: プロジェクトの設定 ＞ スクリプトのプロパティ に FOLDER_ID が設定されていません。');
+    return;
+  }
   const folder = DriveApp.getFolderById(FOLDER_ID);
   const targetLabelObj = GmailApp.getUserLabelByName(TARGET_LABEL);
   const successLabelObj = GmailApp.getUserLabelByName(SUCCESS_LABEL);
@@ -71,20 +75,22 @@ function importGmailReceipts() {
         const body = msg.getBody();
         const tempName = `[未処理]_${timeStamp}_本文.pdf`;
         
-        // 日本語文字化け対策のため、一時的にGoogle Docsを経由してPDF化
-        const tempDoc = DocumentApp.create('temp_receipt_doc');
-        const tempDocId = tempDoc.getId();
+        // HTMLボディを一時的にGoogleドキュメントにインポートしてPDF化（文字化け防止とレイアウト維持）
         const htmlBlob = Utilities.newBlob(body, 'text/html', 'temp.html');
-        const tempDriveFile = DriveApp.createFile(htmlBlob);
-        const bodyText = tempDriveFile.getAs('text/plain').getDataAsString();
-        tempDoc.getBody().setText(bodyText);
-        tempDoc.saveAndClose();
         
+        // Drive API (v3) を使用して、HTMLをGoogleドキュメント形式に自動変換して作成
+        const fileMetadata = {
+          name: 'temp_receipt_doc',
+          mimeType: 'application/vnd.google-apps.document'
+        };
+        const tempDoc = Drive.Files.create(fileMetadata, htmlBlob);
+        const tempDocId = tempDoc.id;
+        
+        // GoogleドキュメントからPDFを取得
         const pdfBlob = DriveApp.getFileById(tempDocId).getAs('application/pdf').setName(tempName);
         const newFile = folder.createFile(pdfBlob);
         
         // 一時ファイルの削除
-        tempDriveFile.setTrashed(true);
         DriveApp.getFileById(tempDocId).setTrashed(true);
         
         // スプレッドシートへ行追加
@@ -123,6 +129,11 @@ function setFilenameFormula(sheet) {
 // 2. 「確定」データをリネーム ＆ マネーフォワードCSV出力
 // ==========================================
 function processConfirmedReceipts() {
+  if (!FOLDER_ID) {
+    Logger.log('エラー: プロジェクトの設定 ＞ スクリプトのプロパティ に FOLDER_ID が設定されていません。');
+    SpreadsheetApp.getUi().alert('エラー', 'スクリプトのプロパティに FOLDER_ID が設定されていません。プロジェクトの設定から設定してください。', SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   const dataRange = sheet.getDataRange();
   const values = dataRange.getValues();
