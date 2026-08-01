@@ -142,10 +142,13 @@ function processConfirmedReceipts() {
   const pendingRows = [];
   for (let i = 1; i < values.length; i++) {
     const row = values[i];
-    const filenameVal = row[6]; // G列: ファイル名
     
-    // 「リネーム済」ではない行を未処理とする
-    if (filenameVal !== 'リネーム済') {
+    // G列(7列目)のセルを取得し、数式が入っているか確認する
+    const cellRange = sheet.getRange(i + 1, 7);
+    const hasFormula = cellRange.getFormula() !== "";
+    
+    // 数式が入っている行（＝未処理の行）を対象とする
+    if (hasFormula) {
       const rowNum = i + 1;
       const rawDate = row[1]; // B列: 取引日付
       const debit = row[2];   // C列: 勘定科目
@@ -235,8 +238,8 @@ function processConfirmedReceipts() {
       ];
       csvRows.push(csvRow);
       
-      // G列（ファイル名）に「リネーム済」を直接上書き
-      sheet.getRange(item.rowNum, 7).setValue('リネーム済');
+      // G列（ファイル名）に実際のファイル名を上書き設定（数式を上書きして完了フラグとする）
+      sheet.getRange(item.rowNum, 7).setValue(newName);
       processedCount++;
       
     } catch (e) {
