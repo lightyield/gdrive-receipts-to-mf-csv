@@ -124,6 +124,148 @@ function setFilenameFormula(sheet) {
 }
 
 // ==========================================
+// 1.5. 手動アップロードされた領収書を取得してスプレッドシートに登録
+// ==========================================
+function importManualReceipts() {
+  let folders;
+  try {
+    folders = getManualFolders();
+  } catch (e) {
+    Logger.log('エラー: フォルダの取得に失敗しました。' + e.toString());
+    SpreadsheetApp.getUi().alert('エラー', '手動取込用フォルダの取得に失敗しました:\n' + e.toString(), SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const queueFolder = folders.queueFolder;
+  const doneFolder = folders.doneFolder;
+  const files = queueFolder.getFiles();
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+
+  let importedCount = 0;
+  let skippedCount = 0;
+
+  while (files.hasNext()) {
+    const file = files.next();
+    const originalName = file.getName();
+    
+    // 拡張子の取得
+    const extMatch = originalName.match(/\.[^.]+$/);
+    const ext = extMatch ? extMatch[0] : '';
+    const baseName = originalName.substring(0, originalName.length - ext.length);
+    
+    // ファイル名のパース: YYYYMMDD_勘定科目_取引先名_金額円_メモ（メモは省略可能）
+    const match = baseName.match(/^(\d{8})_([^_]+)_([^_]+)_(\d+)円(?:_(.*))?$/);
+    
+    if (!match) {
+      Logger.log(`スキップ: ファイル名形式が不適合です: ${originalName}`);
+      skippedCount++;
+      continue;
+    }
+    
+    const rawDate = match[1];
+    const category = match[2];
+    const vendor = match[3];
+    const amount = parseInt(match[4], 10);
+    const memo = match[5] || ''; // マッチしない場合は空文字
+    
+    // 取引日付のフォーマット (YYYYMMDD -> YYYY/MM/DD)
+    const formattedDate = rawDate.replace(/(\d{4})(\d{2})(\d{2})/, '$1/$2/$3');
+    
+    try {
+      // ファイルを「処理済み」フォルダに移動
+      file.moveTo(doneFolder);
+      
+      // スプレッドシートへ行追加
+      // 列構成: 受信日時(A), 取引日付(B), 勘定科目(C), 取引先名(D), 取引金額(E), メモ(F), ファイル名(G), ファイルID(H), 領収書リンク(I)
+      const now = new Date();
+      sheet.appendRow([
+        now,             // 受信日時（取り込み日時）
+        formattedDate,   // 取引日付
+        category,        // 勘定科目
+        vendor,          // 取引先名
+        amount,          // 取引金額
+        memo,            // メモ
+        '',              // ファイル名 (数式挿入のため一旦空)
+        file.getId(),    // ファイルID
+        file.getUrl()    // 領収書リンク
+      ]);
+      
+      // G列にファイル名組み立て数式を設定
+      setFilenameFormula(sheet);
+      
+      importedCount++;
+      Logger.log(`取込成功: ${originalName} -> 処理済みへ移動`);
+      
+    } catch (e) {
+      Logger.log(`エラー: ファイル ${originalName} の処理中にエラーが発生しました: ` + e.toString());
+    }
+  }
+  
+  let msg = `${importedCount}件の手動領収書を取り込みました。`;
+  if (skippedCount > 0) {
+    msg += `\n※ 適合しないファイル名の画像等 ${skippedCount}件 をスキップしました（処理待ちフォルダに残されています）。`;
+  }
+  
+  SpreadsheetApp.getUi().alert('手動取込完了', msg, SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+// 手動取込用のフォルダ（処理待ち・処理済み）を取得するヘルパー関数
+function getManualFolders() {
+  const manualQueueId = PropertiesService.getScriptProperties().getProperty('MANUAL_QUEUE_FOLDER_ID');
+  const manualDoneId = PropertiesService.getScriptProperties().getProperty('MANUAL_DONE_FOLDER_ID');
+
+  let queueFolder = null;
+  let doneFolder = null;
+
+  // 1. スクリプトプロパティで個別に設定されている場合はそれを優先
+  if (manualQueueId) {
+    try {
+      queueFolder = DriveApp.getFolderById(manualQueueId);
+    } catch (e) {
+      Logger.log('警告: MANUAL_QUEUE_FOLDER_ID で指定されたフォルダの取得に失敗しました: ' + e.toString());
+    }
+  }
+  if (manualDoneId) {
+    try {
+      doneFolder = DriveApp.getFolderById(manualDoneId);
+    } catch (e) {
+      Logger.log('警告: MANUAL_DONE_FOLDER_ID で指定されたフォルダの取得に失敗しました: ' + e.toString());
+    }
+  }
+
+  // 2. 設定されていない場合は、FOLDER_ID から相対的に探索
+  if (!queueFolder || !doneFolder) {
+    if (!FOLDER_ID) {
+      throw new Error('FOLDER_ID または MANUAL_QUEUE_FOLDER_ID / MANUAL_DONE_FOLDER_ID が設定されていません。');
+    }
+    const parentFolder = DriveApp.getFolderById(FOLDER_ID);
+    const manualFolders = parentFolder.getFoldersByName('手動');
+    if (!manualFolders.hasNext()) {
+      throw new Error('親フォルダの下に「手動」フォルダが見つかりません。');
+    }
+    const manualFolder = manualFolders.next();
+
+    if (!queueFolder) {
+      const queueFolders = manualFolder.getFoldersByName('処理待ち');
+      if (!queueFolders.hasNext()) {
+        throw new Error('「手動」フォルダの下に「処理待ち」フォルダが見つかりません。');
+      }
+      queueFolder = queueFolders.next();
+    }
+
+    if (!doneFolder) {
+      const doneFolders = manualFolder.getFoldersByName('処理済み');
+      if (!doneFolders.hasNext()) {
+        throw new Error('「手動」フォルダの下に「処理済み」フォルダが見つかりません。');
+      }
+      doneFolder = doneFolders.next();
+    }
+  }
+
+  return { queueFolder, doneFolder };
+}
+
+// ==========================================
 // 2. 「確定」データをリネーム ＆ マネーフォワードCSV出力
 // ==========================================
 function processConfirmedReceipts() {
@@ -287,6 +429,7 @@ function onOpen() {
   const ui = SpreadsheetApp.getUi();
   ui.createMenu('領収書管理')
     .addItem('Gmailから領収書を取込', 'importGmailReceipts')
+    .addItem('手動アップロード領収書を取込', 'importManualReceipts')
     .addItem('未処理データのリネーム＆CSV出力', 'processConfirmedReceipts')
     .addSeparator()
     .addItem('勘定科目プルダウンを設定', 'setupCategoryValidation')
