@@ -55,7 +55,7 @@ function importGmailReceipts() {
             continue; // 小さい画像（ロゴ等）は無視
           }
           
-          const tempName = `[未処理]_${timeStamp}_${file.getName()}`;
+          const tempName = `${timeStamp}_${file.getName()}`;
           const newFile = folder.createFile(file.copyBlob()).setName(tempName);
           
           // スプレッドシートへ行追加
@@ -75,7 +75,7 @@ function importGmailReceipts() {
       } else {
         // 【パターンB】本文PDF化
         const body = msg.getBody();
-        const tempName = `[未処理]_${timeStamp}_本文.pdf`;
+        const tempName = `${timeStamp}.pdf`;
         
         // HTMLボディを一時的にGoogleドキュメントにインポートしてPDF化（文字化け防止とレイアウト維持）
         const htmlBlob = Utilities.newBlob(body, 'text/html', 'temp.html');
