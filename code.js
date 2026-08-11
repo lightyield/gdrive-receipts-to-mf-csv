@@ -118,8 +118,8 @@ function importGmailReceipts() {
 function setFilenameFormula(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
-  // G列(7列目)に数式を挿入: YYYY.MM.DD_勘定科目_取引先名_取引金額円_メモ
-  const formula = `=TEXT(B${lastRow}, "yyyy.MM.dd")&"_"&C${lastRow}&"_"&D${lastRow}&"_"&E${lastRow}&"円_"&F${lastRow}`;
+  // G列(7列目)に数式を挿入: YYYY.MM.DD_勘定科目_取引先名_取引金額円_メモ（メモが空なら末尾にアンダースコアを付けない）
+  const formula = `=TEXT(B${lastRow}, "yyyy.MM.dd")&"_"&C${lastRow}&"_"&D${lastRow}&"_"&E${lastRow}&"円"&IF(F${lastRow}<>"", "_"&F${lastRow}, "")`;
   sheet.getRange(lastRow, 7).setFormula(formula);
 }
 
