@@ -16,11 +16,14 @@ const SUCCESS_LABEL = '自動保存_完了';
 // 1. Gmailから領収書を取得してスプレッドシートに登録
 // ==========================================
 function importGmailReceipts() {
-  if (!FOLDER_ID) {
-    Logger.log('エラー: プロジェクトの設定 ＞ スクリプトのプロパティ に FOLDER_ID が設定されていません。');
+  let gmailFolders;
+  try {
+    gmailFolders = getGmailFolders();
+  } catch (e) {
+    Logger.log('エラー: Gmailフォルダの取得に失敗しました。' + e.toString());
     return;
   }
-  const folder = DriveApp.getFolderById(FOLDER_ID);
+  const folder = gmailFolders.queueFolder;
   const targetLabelObj = GmailApp.getUserLabelByName(TARGET_LABEL);
   const successLabelObj = GmailApp.getUserLabelByName(SUCCESS_LABEL);
   
@@ -271,6 +274,62 @@ function getManualFolders() {
   return { queueFolder, doneFolder };
 }
 
+// Gmail取込用のフォルダ（処理待ち・処理済み）を取得するヘルパー関数
+function getGmailFolders() {
+  const gmailQueueId = PropertiesService.getScriptProperties().getProperty('GMAIL_QUEUE_FOLDER_ID');
+  const gmailDoneId = PropertiesService.getScriptProperties().getProperty('GMAIL_DONE_FOLDER_ID');
+
+  let queueFolder = null;
+  let doneFolder = null;
+
+  // 1. スクリプトプロパティで個別に設定されている場合はそれを優先
+  if (gmailQueueId) {
+    try {
+      queueFolder = DriveApp.getFolderById(gmailQueueId);
+    } catch (e) {
+      Logger.log('警告: GMAIL_QUEUE_FOLDER_ID で指定されたフォルダの取得に失敗しました: ' + e.toString());
+    }
+  }
+  if (gmailDoneId) {
+    try {
+      doneFolder = DriveApp.getFolderById(gmailDoneId);
+    } catch (e) {
+      Logger.log('警告: GMAIL_DONE_FOLDER_ID で指定されたフォルダの取得に失敗しました: ' + e.toString());
+    }
+  }
+
+  // 2. 設定されていない場合は、FOLDER_ID から相対的に探索
+  if (!queueFolder || !doneFolder) {
+    if (!FOLDER_ID) {
+      throw new Error('FOLDER_ID または GMAIL_QUEUE_FOLDER_ID / GMAIL_DONE_FOLDER_ID が設定されていません。');
+    }
+    const parentFolder = DriveApp.getFolderById(FOLDER_ID);
+    const gmailFolders = parentFolder.getFoldersByName('Gmail');
+    if (!gmailFolders.hasNext()) {
+      throw new Error('親フォルダの下に「Gmail」フォルダが見つかりません。');
+    }
+    const gmailFolder = gmailFolders.next();
+
+    if (!queueFolder) {
+      const queueFolders = gmailFolder.getFoldersByName('処理待ち');
+      if (!queueFolders.hasNext()) {
+        throw new Error('「Gmail」フォルダの下に「処理待ち」フォルダが見つかりません。');
+      }
+      queueFolder = queueFolders.next();
+    }
+
+    if (!doneFolder) {
+      const doneFolders = gmailFolder.getFoldersByName('処理済み');
+      if (!doneFolders.hasNext()) {
+        throw new Error('「Gmail」フォルダの下に「処理済み」フォルダが見つかりません。');
+      }
+      doneFolder = doneFolders.next();
+    }
+  }
+
+  return { queueFolder, doneFolder };
+}
+
 // ==========================================
 // 2. 「確定」データをリネーム ＆ マネーフォワードCSV出力
 // ==========================================
@@ -351,9 +410,25 @@ function processConfirmedReceipts() {
     
     try {
       // -----------------------------
-      // ドライブ上のファイルリネーム
+      // ドライブ上のファイルリネーム ＆ 移動
       // -----------------------------
       const file = DriveApp.getFileById(item.fileId);
+      
+      // Gmailの処理待ちに入っている場合は、Gmailの処理済みへ移動する
+      try {
+        const gmailFolders = getGmailFolders();
+        const parents = file.getParents();
+        if (parents.hasNext()) {
+          const parent = parents.next();
+          if (parent.getId() === gmailFolders.queueFolder.getId()) {
+            file.moveTo(gmailFolders.doneFolder);
+          }
+        }
+      } catch (folderError) {
+        // フォルダ取得失敗時などはログに出すだけでリネーム処理は続行
+        Logger.log('警告: Gmailフォルダへの移動処理をスキップしました: ' + folderError.toString());
+      }
+      
       const originalName = file.getName();
       
       // 拡張子の取得
