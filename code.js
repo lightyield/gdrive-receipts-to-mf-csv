@@ -531,16 +531,19 @@ function exportMFSheetsCSV() {
   ).join('\r\n');
   
   try {
+    // CSVファイルのファイル名定義
+    const csvFileName = `mf_journal_${Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss')}.csv`;
+    
     // Shift_JISに変換（マネーフォワード取り込み時の日本語文字化け防止）
-    const blob = Utilities.newBlob(csvContent, 'text/csv', `mf_journal_${Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss')}.csv`);
+    const blob = Utilities.newBlob(csvContent, 'text/csv', csvFileName);
     const sjisBlob = blob.getAs('text/csv').setDataFromString(csvContent, 'Shift_JIS');
     
     // GoogleドライブにCSVを保存
     const csvFile = folder.createFile(sjisBlob);
     
-    // 対象行のJ列に「出力済」と日付を書き込む
+    // 対象行 of J列にCSVファイル名を書き込む
     for (let i = 0; i < exportRows.length; i++) {
-      sheet.getRange(exportRows[i].rowNum, 10).setValue(`出力済 (${todayStr})`);
+      sheet.getRange(exportRows[i].rowNum, 10).setValue(csvFileName);
     }
     
     SpreadsheetApp.getUi().alert(
@@ -605,7 +608,7 @@ function setupCategoryValidation() {
   
   // J1セル（10列目）に「CSV出力」ヘッダーを設定
   sheet.getRange("J1").setValue("CSV出力");
-  sheet.getRange("J1").setHorizontalAlignment("center");
+  sheet.getRange("J1").setHorizontalAlignment("left");
   
   // G列（ファイル名）の古い数式のアップデート（未処理の数式セルが対象）
   const lastRow = sheet.getLastRow();
