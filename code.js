@@ -121,6 +121,9 @@ function setFilenameFormula(sheet) {
   // G列(7列目)に数式を挿入: YYYY.MM.DD_勘定科目_取引先名_取引金額円_メモ（メモが空なら末尾にアンダースコアを付けない）
   const formula = `=TEXT(B${lastRow}, "yyyy.MM.dd")&"_"&C${lastRow}&"_"&D${lastRow}&"_"&E${lastRow}&"円"&IF(F${lastRow}<>"", "_"&F${lastRow}, "")`;
   sheet.getRange(lastRow, 7).setFormula(formula);
+  
+  // E列(5列目)に数値フォーマット（カンマ区切り）を適用
+  sheet.getRange(lastRow, 5).setNumberFormat("#,##0");
 }
 
 // ==========================================
@@ -470,9 +473,26 @@ function setupCategoryValidation() {
   
   range.setDataValidation(rule);
   
+  // E列（取引金額）の数値フォーマット設定（カンマ区切り）
+  sheet.getRange("E2:E1000").setNumberFormat("#,##0");
+  
+  // G列（ファイル名）の古い数式のアップデート（未処理の数式セルが対象）
+  const lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    const formulas = sheet.getRange(2, 7, lastRow - 1, 1).getFormulas();
+    for (let i = 0; i < formulas.length; i++) {
+      const rowNum = i + 2;
+      // 数式が入っている行のみアップデート
+      if (formulas[i][0] !== "") {
+        const formula = `=TEXT(B${rowNum}, "yyyy.MM.dd")&"_"&C${rowNum}&"_"&D${rowNum}&"_"&E${rowNum}&"円"&IF(F${rowNum}<>"", "_"&F${rowNum}, "")`;
+        sheet.getRange(rowNum, 7).setFormula(formula);
+      }
+    }
+  }
+  
   SpreadsheetApp.getUi().alert(
-    '設定完了', 
-    'C列に勘定科目のプルダウンを設定しました。\nリストにない値も直接手入力が可能です。', 
+    '設定・修復完了', 
+    'C列のプルダウン設定、E列の金額フォーマット（カンマ区切り）の設定、およびG列の未処理ファイル名数式のアップデートが完了しました。', 
     SpreadsheetApp.getUi().ButtonSet.OK
   );
 }
