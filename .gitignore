@@ -6,5 +6,7 @@ node_modules/
 npm-debug.log*
 
 # clasp (Google Apps Script CLI)
-# ※.clasprc.jsonにはアクセストークンが含まれるため、絶対にコミットしないようにします
+# ※.clasprc.jsonにはアクセストークン、.clasp.jsonにはスクリプトIDが含まれるため、絶対にコミットしないようにします
 .clasprc.json
+.clasp.json
+
