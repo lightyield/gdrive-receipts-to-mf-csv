@@ -153,8 +153,10 @@ function importManualReceipts() {
     const ext = extMatch ? extMatch[0] : '';
     const baseName = originalName.substring(0, originalName.length - ext.length);
     
-    // ファイル名のパース: YYYYMMDD_勘定科目_取引先名_金額円_メモ（メモは省略可能）
-    const match = baseName.match(/^(\d{8})_([^_]+)_([^_]+)_(\d+)円(?:_(.*))?$/);
+    // ファイル名のパース: 日付_勘定科目_取引先名_金額円_メモ（メモは省略可能）
+    // 日付は YYYYMMDD のほか YYYY.MM.DD や YYYY/MM/DD, YYYY-MM-DD にも対応
+    // 金額はカンマ区切り（2,731円など）にも対応
+    const match = baseName.match(/^(\d{4}[./-]?\d{2}[./-]?\d{2})_([^_]+)_([^_]+)_([\d,]+)円(?:_(.*))?$/);
     
     if (!match) {
       Logger.log(`スキップ: ファイル名形式が不適合です: ${originalName}`);
@@ -162,10 +164,11 @@ function importManualReceipts() {
       continue;
     }
     
-    const rawDate = match[1];
+    const rawDate = match[1].replace(/[./-]/g, ''); // 記号を除去して8桁の数字にする
     const category = match[2];
     const vendor = match[3];
-    const amount = parseInt(match[4], 10);
+    const amountStr = match[4].replace(/,/g, '');   // カンマを除去
+    const amount = parseInt(amountStr, 10);
     const memo = match[5] || ''; // マッチしない場合は空文字
     
     // 取引日付のフォーマット (YYYYMMDD -> YYYY/MM/DD)
