@@ -288,5 +288,45 @@ function onOpen() {
   ui.createMenu('領収書管理')
     .addItem('Gmailから領収書を取込', 'importGmailReceipts')
     .addItem('未処理データのリネーム＆CSV出力', 'processConfirmedReceipts')
+    .addSeparator()
+    .addItem('勘定科目プルダウンを設定', 'setupCategoryValidation')
     .addToUi();
+}
+
+// ==========================================
+// 4. 勘定科目プルダウンの設定
+// ==========================================
+function setupCategoryValidation() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  
+  // ユーザー指定の勘定科目リスト
+  const categories = [
+    '接待交際費',
+    '備品・消耗品費',
+    '旅費交通費',
+    '通信費',
+    '新聞図書費',
+    '車両費',
+    '荷造運賃',
+    '支払手数料',
+    '租税公課'
+  ];
+  
+  // C列（C2以降のデータ入力範囲として、C2:C1000 を設定）
+  const range = sheet.getRange("C2:C1000");
+  
+  // データの入力規則を作成
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(categories, true) // リストから選択（ドロップダウン表示）
+    .setAllowInvalid(true)                // リスト外の値の手入力も許可する
+    .setHelpText('リストから勘定科目を選択するか、直接入力してください。')
+    .build();
+  
+  range.setDataValidation(rule);
+  
+  SpreadsheetApp.getUi().alert(
+    '設定完了', 
+    'C列に勘定科目のプルダウンを設定しました。\nリストにない値も直接手入力が可能です。', 
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
 }
