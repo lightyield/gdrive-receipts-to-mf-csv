@@ -249,6 +249,30 @@ describe('code.js テストスイート', () => {
     expect(mockCellRange.setValue).toHaveBeenCalledWith('2026.08.18_旅費交通費_タクシー_1500円_出張.pdf');
   });
 
+  test('renameGmailReceipts() - A列（取込経路）が"Gmail"ではない場合は無視されること', () => {
+    // A列を「手動」にしたモックデータを返すように一時的に設定
+    mockSheet.getDataRange = jest.fn().mockReturnValue({
+      getValues: jest.fn().mockReturnValue([
+        ['取込経路', '受信日時', '取引日付', '勘定科目', '取引先名', '取引金額', 'メモ', 'ファイル名', 'ファイルID', '領収書リンク', 'CSV出力'],
+        ['手動', new Date(), '2026/08/18', '旅費交通費', 'タクシー', 1500, '出張', '=TEXT(C2, ...)', 'mock-file-id', 'https://mock-file-url', '']
+      ])
+    });
+
+    const mockCellRange = {
+      getFormula: jest.fn().mockReturnValue('=TEXT(...)'),
+      setValue: jest.fn()
+    };
+    mockSheet.getRange = jest.fn().mockImplementation((row, col) => {
+      if (row === 2 && col === 8) return mockCellRange;
+      return {};
+    });
+
+    renameGmailReceipts();
+
+    expect(mockFile.setName).not.toHaveBeenCalled();
+    expect(mockCellRange.setValue).not.toHaveBeenCalled();
+  });
+
   test('exportMFSheetsCSV() - リネーム済みでCSV未出力のデータがCSV出力され、K列(11)にファイル名が書き込まれること', () => {
     // 2行目の数式を空（リネーム完了済み）にする
     const mockCellRange = {
