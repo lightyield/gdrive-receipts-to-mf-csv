@@ -367,8 +367,9 @@ function renameGmailReceipts() {
     const cellRange = sheet.getRange(i + 1, 8);
     const hasFormula = cellRange.getFormula() !== "";
     
-    // 数式が入っている行（＝未処理の行）を対象とする
-    if (hasFormula) {
+    // A列(取込経路)が「Gmail」かつ H列(8列目)に数式が入っている行（＝Gmail未処理の行）を対象とする
+    const sourcePath = row[0]; // A列: 取込経路
+    if (sourcePath === 'Gmail' && hasFormula) {
       const rowNum = i + 1;
       const rawDate = row[2]; // C列: 取引日付
       const debit = row[3];   // D列: 勘定科目
