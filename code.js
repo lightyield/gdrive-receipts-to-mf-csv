@@ -60,15 +60,16 @@ function importGmailReceipts() {
           
           // スプレッドシートへ行追加
           sheet.appendRow([
-            date, 
-            formattedDate, // 取引日付の初期値として受信日を設定
-            '', // 勘定科目 (手動入力用)
-            '', // 取引先名 (手動入力用)
-            '', // 取引金額 (手動入力用)
-            '', // メモ (手動入力用)
-            '', // 数式により自動表示されるため空白
-            newFile.getId(), 
-            newFile.getUrl()
+            'Gmail', // A列: 取込経路
+            date,    // B列: 受信日時
+            formattedDate, // C列: 取引日付の初期値として受信日を設定
+            '', // D列: 勘定科目 (手動入力用)
+            '', // E列: 取引先名 (手動入力用)
+            '', // F列: 取引金額 (手動入力用)
+            '', // G列: メモ (手動入力用)
+            '', // H列: 数式により自動表示されるため空白
+            newFile.getId(), // I列: ファイルID
+            newFile.getUrl() // J列: 領収書リンク
           ]);
           setFilenameFormula(sheet);
         }
@@ -97,15 +98,16 @@ function importGmailReceipts() {
         
         // スプレッドシートへ行追加
         sheet.appendRow([
-          date, 
-          formattedDate,
-          '', 
-          '', 
-          '', 
-          '', 
-          '', 
-          newFile.getId(), 
-          newFile.getUrl()
+          'Gmail', // A列: 取込経路
+          date,    // B列: 受信日時
+          formattedDate, // C列: 取引日付
+          '', // D列: 勘定科目
+          '', // E列: 取引先名
+          '', // F列: 取引金額
+          '', // G列: メモ
+          '', // H列: ファイル名（数式により自動表示されるため空白）
+          newFile.getId(), // I列: ファイルID
+          newFile.getUrl() // J列: 領収書リンク
         ]);
         setFilenameFormula(sheet);
       }
@@ -117,16 +119,16 @@ function importGmailReceipts() {
   }
 }
 
-// G列にファイル名組み立て数式を設定するヘルパー関数
+// H列にファイル名組み立て数式を設定するヘルパー関数
 function setFilenameFormula(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
-  // G列(7列目)に数式を挿入: YYYY.MM.DD_勘定科目_取引先名_取引金額円_メモ（メモが空なら末尾にアンダースコアを付けない）
-  const formula = `=TEXT(B${lastRow}, "yyyy.MM.dd")&"_"&C${lastRow}&"_"&D${lastRow}&"_"&E${lastRow}&"円"&IF(F${lastRow}<>"", "_"&F${lastRow}, "")`;
-  sheet.getRange(lastRow, 7).setFormula(formula);
+  // H列(8列目)に数式を挿入: YYYY.MM.DD_勘定科目_取引先名_取引金額円_メモ（メモが空なら末尾にアンダースコアを付けない）
+  const formula = `=TEXT(C${lastRow}, "yyyy.MM.dd")&"_"&D${lastRow}&"_"&E${lastRow}&"_"&F${lastRow}&"円"&IF(G${lastRow}<>"", "_"&G${lastRow}, "")`;
+  sheet.getRange(lastRow, 8).setFormula(formula);
   
-  // E列(5列目)に数値フォーマット（カンマ区切り）を適用
-  sheet.getRange(lastRow, 5).setNumberFormat("#,##0");
+  // F列(6列目)に数値フォーマット（カンマ区切り）を適用
+  sheet.getRange(lastRow, 6).setNumberFormat("#,##0");
 }
 
 // ==========================================
@@ -191,9 +193,10 @@ function importManualReceipts() {
       file.setName(newName);
       
       // スプレッドシートへ行追加
-      // 列構成: 受信日時(A), 取引日付(B), 勘定科目(C), 取引先名(D), 取引金額(E), メモ(F), ファイル名(G), ファイルID(H), 領収書リンク(I)
+      // 列構成: 取込経路(A), 受信日時(B), 取引日付(C), 勘定科目(D), 取引先名(E), 取引金額(F), メモ(G), ファイル名(H), ファイルID(I), 領収書リンク(J)
       const now = new Date();
       sheet.appendRow([
+        '手動',           // 取込経路
         now,             // 受信日時（取り込み日時）
         formattedDate,   // 取引日付
         category,        // 勘定科目
@@ -205,9 +208,9 @@ function importManualReceipts() {
         file.getUrl()    // 領収書リンク
       ]);
       
-      // E列(5列目)に数値フォーマット（カンマ区切り）を適用
+      // F列(6列目)に数値フォーマット（カンマ区切り）を適用
       const lastRow = sheet.getLastRow();
-      sheet.getRange(lastRow, 5).setNumberFormat("#,##0");
+      sheet.getRange(lastRow, 6).setNumberFormat("#,##0");
       
       importedCount++;
       Logger.log(`取込成功: ${originalName} -> 処理済みへ移動`);
@@ -360,18 +363,18 @@ function renameGmailReceipts() {
   for (let i = 1; i < values.length; i++) {
     const row = values[i];
     
-    // G列(7列目)のセルを取得し、数式が入っているか確認する
-    const cellRange = sheet.getRange(i + 1, 7);
+    // H列(8列目)のセルを取得し、数式が入っているか確認する
+    const cellRange = sheet.getRange(i + 1, 8);
     const hasFormula = cellRange.getFormula() !== "";
     
     // 数式が入っている行（＝未処理の行）を対象とする
     if (hasFormula) {
       const rowNum = i + 1;
-      const rawDate = row[1]; // B列: 取引日付
-      const debit = row[2];   // C列: 勘定科目
-      const vendor = row[3];  // D列: 取引先名
-      const amount = row[4];  // E列: 取引金額
-      const fileId = row[7];  // H列: ファイルID
+      const rawDate = row[2]; // C列: 取引日付
+      const debit = row[3];   // D列: 勘定科目
+      const vendor = row[4];  // E列: 取引先名
+      const amount = row[5];  // F列: 取引金額
+      const fileId = row[8];  // I列: ファイルID
       
       if (!fileId) continue;
       
@@ -402,7 +405,7 @@ function renameGmailReceipts() {
             const dateObj = new Date(rawDate);
             const dotDate = Utilities.formatDate(dateObj, Session.getScriptTimeZone(), 'yyyy.MM.dd');
             
-            const memoVal = row[5]; // F列: メモ
+            const memoVal = row[6]; // G列: メモ
             const memoPart = memoVal ? `_${memoVal}` : '';
             const newName = `${dotDate}_${debit}_${vendor}_${amount}円${memoPart}${ext}`;
             
@@ -449,17 +452,17 @@ function exportMFSheetsCSV() {
     const row = values[i];
     const rowNum = i + 1;
     
-    const cellRange = sheet.getRange(rowNum, 7);
+    const cellRange = sheet.getRange(rowNum, 8);
     const hasFormula = cellRange.getFormula() !== "";
-    const fileNameVal = row[6]; // G列: ファイル名
-    const csvStatus = row[9] || ""; // J列: CSV出力ステータス（10列目）
+    const fileNameVal = row[7]; // H列: ファイル名
+    const csvStatus = row[10] || ""; // K列: CSV出力ステータス（11列目）
     
-    // G列に値が入っており（＝数式ではない＝リネーム・手動取込完了）、かつJ列（CSV出力）が空であるものを対象とする
+    // H列に値が入っており（＝数式ではない＝リネーム・手動取込完了）、かつK列（CSV出力）が空であるものを対象とする
     if (!hasFormula && fileNameVal && csvStatus === "") {
-      const rawDate = row[1]; // B列: 取引日付
-      const debit = row[2];   // C列: 勘定科目
-      const vendor = row[3];  // D列: 取引先名
-      const amount = row[4];  // E列: 取引金額
+      const rawDate = row[2]; // C列: 取引日付
+      const debit = row[3];   // D列: 勘定科目
+      const vendor = row[4];  // E列: 取引先名
+      const amount = row[5];  // F列: 取引金額
       
       // 必須項目のバリデーション
       if (!rawDate || !debit || !vendor || amount === '') {
@@ -475,7 +478,7 @@ function exportMFSheetsCSV() {
         debit: debit,
         vendor: vendor,
         amount: amount,
-        memo: row[5] // F列: メモ
+        memo: row[6] // G列: メモ
       });
     }
   }
@@ -541,9 +544,9 @@ function exportMFSheetsCSV() {
     // GoogleドライブにCSVを保存
     const csvFile = folder.createFile(sjisBlob);
     
-    // 対象行 of J列にCSVファイル名を書き込む
+    // 対象行 of K列にCSVファイル名を書き込む
     for (let i = 0; i < exportRows.length; i++) {
-      sheet.getRange(exportRows[i].rowNum, 10).setValue(csvFileName);
+      sheet.getRange(exportRows[i].rowNum, 11).setValue(csvFileName);
     }
     
     SpreadsheetApp.getUi().alert(
@@ -591,8 +594,8 @@ function setupCategoryValidation() {
     '租税公課'
   ];
   
-  // C列（C2以降のデータ入力範囲として、C2:C1000 を設定）
-  const range = sheet.getRange("C2:C1000");
+  // D列（D2以降のデータ入力範囲として、D2:D1000 を設定）
+  const range = sheet.getRange("D2:D1000");
   
   // データの入力規則を作成
   const rule = SpreadsheetApp.newDataValidation()
@@ -603,30 +606,33 @@ function setupCategoryValidation() {
   
   range.setDataValidation(rule);
   
-  // E列（取引金額）の数値フォーマット設定（カンマ区切り）
-  sheet.getRange("E2:E1000").setNumberFormat("#,##0");
+  // F列（取引金額）の数値フォーマット設定（カンマ区切り）
+  sheet.getRange("F2:F1000").setNumberFormat("#,##0");
   
-  // J1セル（10列目）に「CSV出力」ヘッダーを設定
-  sheet.getRange("J1").setValue("CSV出力");
-  sheet.getRange("J1").setHorizontalAlignment("left");
+  // ヘッダー（A1:K1）の一括設定・更新
+  const headers = [
+    ["取込経路", "受信日時", "取引日付", "勘定科目", "取引先名", "取引金額", "メモ", "ファイル名", "ファイルID", "領収書リンク", "CSV出力"]
+  ];
+  sheet.getRange("A1:K1").setValues(headers);
+  sheet.getRange("A1:K1").setHorizontalAlignment("left");
   
-  // G列（ファイル名）の古い数式のアップデート（未処理の数式セルが対象）
+  // H列（ファイル名）の古い数式のアップデート（未処理の数式セルが対象）
   const lastRow = sheet.getLastRow();
   if (lastRow >= 2) {
-    const formulas = sheet.getRange(2, 7, lastRow - 1, 1).getFormulas();
+    const formulas = sheet.getRange(2, 8, lastRow - 1, 1).getFormulas();
     for (let i = 0; i < formulas.length; i++) {
       const rowNum = i + 2;
       // 数式が入っている行のみアップデート
       if (formulas[i][0] !== "") {
-        const formula = `=TEXT(B${rowNum}, "yyyy.MM.dd")&"_"&C${rowNum}&"_"&D${rowNum}&"_"&E${rowNum}&"円"&IF(F${rowNum}<>"", "_"&F${rowNum}, "")`;
-        sheet.getRange(rowNum, 7).setFormula(formula);
+        const formula = `=TEXT(C${rowNum}, "yyyy.MM.dd")&"_"&D${rowNum}&"_"&E${rowNum}&"_"&F${rowNum}&"円"&IF(G${rowNum}<>"", "_"&G${rowNum}, "")`;
+        sheet.getRange(rowNum, 8).setFormula(formula);
       }
     }
   }
   
   SpreadsheetApp.getUi().alert(
     '設定・修復完了', 
-    'C列のプルダウン設定、E列の金額フォーマット（カンマ区切り）の設定、J列の出力ステータスヘッダーの設定、およびG列の未処理ファイル名数式のアップデートが完了しました。', 
+    'A1:K1のヘッダー再設定、D列のプルダウン設定、F列の金額フォーマット（カンマ区切り）の設定、およびH列の未処理ファイル名数式のアップデートが完了しました。', 
     SpreadsheetApp.getUi().ButtonSet.OK
   );
 }

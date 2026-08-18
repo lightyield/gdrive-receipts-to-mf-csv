@@ -5,9 +5,11 @@
   "scripts": {
     "login": "clasp login",
     "pull": "clasp pull",
-    "deploy": "clasp push"
+    "deploy": "clasp push",
+    "test": "jest"
   },
   "devDependencies": {
-    "@google/clasp": "^2.4.2"
+    "@google/clasp": "^2.4.2",
+    "jest": "^30.4.2"
   }
 }
