@@ -60,6 +60,7 @@ mockFolder = {
 mockSheet = {
   appendRow: jest.fn(),
   getLastRow: jest.fn().mockReturnValue(2),
+  deleteRow: jest.fn(),
   getRange: jest.fn().mockReturnValue({
     setFormula: jest.fn(),
     setNumberFormat: jest.fn(),
@@ -103,7 +104,8 @@ mockGmailThreads = [{
 
 mockUi = {
   alert: jest.fn(),
-  ButtonSet: { OK: 'OK' }
+  ButtonSet: { OK: 'OK', YES_NO: 'YES_NO' },
+  Button: { YES: 'YES', NO: 'NO' }
 };
 
 global.Logger = { log: jest.fn() };
@@ -325,5 +327,50 @@ describe('code.js テストスイート', () => {
     expect(mockRangeFormulaCell.setFormula).toHaveBeenCalledWith(
       `=TEXT(C2, "yyyy.MM.dd")&"_"&D2&"_"&E2&"_"&F2&"円"&IF(G2<>"", "_"&G2, "")`
     );
+  });
+
+  describe('deleteExportedReceipts() テスト', () => {
+    test('ユーザーが「いいえ」を選択した場合、削除が実行されないこと', () => {
+      mockUi.alert.mockReturnValue('NO'); // ui.Button.NO
+
+      deleteExportedReceipts();
+
+      expect(mockUi.alert).toHaveBeenCalledWith(
+        '確認',
+        expect.stringContaining('CSV出力済みのレコードを削除しますか？'),
+        'YES_NO'
+      );
+      expect(mockSheet.deleteRow).not.toHaveBeenCalled();
+    });
+
+    test('ユーザーが「はい」を選択した場合、CSV出力済みの行が下から順に削除されること', () => {
+      mockUi.alert.mockReturnValue('YES'); // ui.Button.YES
+
+      // K列(11列目)に値がある行とない行を混在させる
+      // 2行目: CSV未出力 (K列='')
+      // 3行目: CSV出力済み (K列='mf_journal_...')
+      // 4行目: CSV出力済み (K列='mf_journal_...')
+      // 5行目: CSV未出力 (K列='')
+      mockSheet.getDataRange = jest.fn().mockReturnValue({
+        getValues: jest.fn().mockReturnValue([
+          ['取込経路', '受信日時', '取引日付', '勘定科目', '取引先名', '取引金額', 'メモ', 'ファイル名', 'ファイルID', '領収書リンク', 'CSV出力'],
+          ['Gmail', new Date(), '2026/08/18', '旅費交通費', 'タクシー', 1500, '', 'file1.pdf', 'id1', 'url1', ''],
+          ['Gmail', new Date(), '2026/08/18', '旅費交通費', 'タクシー', 2000, '', 'file2.pdf', 'id2', 'url2', 'mf_journal_1.csv'],
+          ['手動', new Date(), '2026/08/19', '通信費', 'インターネット', 5000, '', 'file3.pdf', 'id3', 'url3', 'mf_journal_1.csv'],
+          ['手動', new Date(), '2026/08/19', '会議費', 'カフェ', 800, '', 'file4.pdf', 'id4', 'url4', '']
+        ])
+      });
+
+      deleteExportedReceipts();
+
+      expect(mockSheet.deleteRow).toHaveBeenCalledTimes(2);
+      expect(mockSheet.deleteRow.mock.calls[0][0]).toBe(4);
+      expect(mockSheet.deleteRow.mock.calls[1][0]).toBe(3);
+      expect(mockUi.alert).toHaveBeenLastCalledWith(
+        '処理完了',
+        '2件のレコードを削除しました。',
+        'OK'
+      );
+    });
   });
 });
