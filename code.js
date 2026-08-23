@@ -614,7 +614,7 @@ function onOpen() {
     .addItem('MFクラウド会計向けCSV出力', 'exportMFSheetsCSV')
     .addItem('CSV出力済みレコードを削除', 'deleteExportedReceipts')
     .addSeparator()
-    .addItem('勘定科目プルダウンを設定', 'setupCategoryValidation')
+    .addItem('スプレッドシート初期設定', 'setupCategoryValidation')
     .addToUi();
 }
 
