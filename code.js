@@ -562,6 +562,47 @@ function exportMFSheetsCSV() {
 }
 
 // ==========================================
+// 2.7. 「CSV出力済み」レコードを一括削除
+// ==========================================
+function deleteExportedReceipts() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const ui = SpreadsheetApp.getUi();
+  
+  // ユーザーに確認
+  const response = ui.alert(
+    '確認',
+    'CSV出力済みのレコードを削除しますか？\n（Googleドライブ上の実ファイルは削除されません）',
+    ui.ButtonSet.YES_NO
+  );
+  
+  if (response !== ui.Button.YES) {
+    return;
+  }
+  
+  const dataRange = sheet.getDataRange();
+  const values = dataRange.getValues();
+  let deleteCount = 0;
+  
+  // スプレッドシートの行削除による行ずれを防ぐため、下からループを回す
+  // 2行目 (インデックス 1) までループ
+  for (let i = values.length - 1; i >= 1; i--) {
+    const rowNum = i + 1;
+    const csvStatus = values[i][10] || ""; // K列: CSV出力
+    
+    if (csvStatus !== "") {
+      sheet.deleteRow(rowNum);
+      deleteCount++;
+    }
+  }
+  
+  if (deleteCount === 0) {
+    ui.alert('確認', '削除対象のCSV出力済みレコードはありませんでした。', ui.ButtonSet.OK);
+  } else {
+    ui.alert('処理完了', `${deleteCount}件のレコードを削除しました。`, ui.ButtonSet.OK);
+  }
+}
+
+// ==========================================
 // 3. スプレッドシートメニューの追加
 // ==========================================
 function onOpen() {
@@ -571,6 +612,7 @@ function onOpen() {
     .addItem('手動アップロード領収書を取込', 'importManualReceipts')
     .addItem('Gmail未処理データのリネーム', 'renameGmailReceipts')
     .addItem('MFクラウド会計向けCSV出力', 'exportMFSheetsCSV')
+    .addItem('CSV出力済みレコードを削除', 'deleteExportedReceipts')
     .addSeparator()
     .addItem('勘定科目プルダウンを設定', 'setupCategoryValidation')
     .addToUi();
