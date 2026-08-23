@@ -608,9 +608,9 @@ function deleteExportedReceipts() {
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   ui.createMenu('領収書管理')
-    .addItem('Gmailから領収書を取込', 'importGmailReceipts')
-    .addItem('手動アップロード領収書を取込', 'importManualReceipts')
+    .addItem('Gmailから領収書を取得', 'importGmailReceipts')
     .addItem('Gmail未処理データのリネーム', 'renameGmailReceipts')
+    .addItem('手動アップロード領収書を取込', 'importManualReceipts')
     .addItem('MFクラウド会計向けCSV出力', 'exportMFSheetsCSV')
     .addItem('CSV出力済みレコードを削除', 'deleteExportedReceipts')
     .addSeparator()
