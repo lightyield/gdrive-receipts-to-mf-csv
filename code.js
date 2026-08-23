@@ -359,8 +359,8 @@ function renameGmailReceipts() {
   
   let processedCount = 0;
   
-  // 2行目からループ
-  for (let i = 1; i < values.length; i++) {
+  // 3行目からループ
+  for (let i = 2; i < values.length; i++) {
     const row = values[i];
     
     // H列(8列目)のセルを取得し、数式が入っているか確認する
@@ -449,7 +449,7 @@ function exportMFSheetsCSV() {
   const exportRows = [];
   const todayStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy/MM/dd');
   
-  for (let i = 1; i < values.length; i++) {
+  for (let i = 2; i < values.length; i++) {
     const row = values[i];
     const rowNum = i + 1;
     
@@ -584,8 +584,8 @@ function deleteExportedReceipts() {
   let deleteCount = 0;
   
   // スプレッドシートの行削除による行ずれを防ぐため、下からループを回す
-  // 2行目 (インデックス 1) までループ
-  for (let i = values.length - 1; i >= 1; i--) {
+  // 3行目 (インデックス 2) までループ
+  for (let i = values.length - 1; i >= 2; i--) {
     const rowNum = i + 1;
     const csvStatus = values[i][10] || ""; // K列: CSV出力
     
@@ -637,8 +637,8 @@ function setupCategoryValidation() {
     '租税公課'
   ];
   
-  // D列（D2以降のデータ入力範囲として、D2:D1000 を設定）
-  const range = sheet.getRange("D2:D1000");
+  // D列（D3以降のデータ入力範囲として、D3:D1000 を設定）
+  const range = sheet.getRange("D3:D1000");
   
   // データの入力規則を作成
   const rule = SpreadsheetApp.newDataValidation()
@@ -650,21 +650,28 @@ function setupCategoryValidation() {
   range.setDataValidation(rule);
   
   // F列（取引金額）の数値フォーマット設定（カンマ区切り）
-  sheet.getRange("F2:F1000").setNumberFormat("#,##0");
+  sheet.getRange("F3:F1000").setNumberFormat("#,##0");
   
-  // ヘッダー（A1:K1）の一括設定・更新
+  // 1行目（集計行）の設定とデザイン適用
+  sheet.getRange("A1").setFormula("=COUNTA(A3:A)").setNumberFormat('"合計件数: "0"件"');
+  sheet.getRange("F1").setFormula("=SUM(F3:F)").setNumberFormat('"合計金額: "#,##0"円"');
+  sheet.getRange("A1:K1").setFontWeight("bold").setBackground("#f3f3f3");
+  sheet.getRange("A1").setHorizontalAlignment("left");
+  sheet.getRange("F1").setHorizontalAlignment("left");
+  
+  // ヘッダー（A2:K2）の一括設定・更新
   const headers = [
     ["取込経路", "受信日時", "取引日付", "勘定科目", "取引先名", "取引金額", "メモ", "ファイル名", "ファイルID", "領収書リンク", "CSV出力"]
   ];
-  sheet.getRange("A1:K1").setValues(headers);
-  sheet.getRange("A1:K1").setHorizontalAlignment("left");
+  sheet.getRange("A2:K2").setValues(headers);
+  sheet.getRange("A2:K2").setHorizontalAlignment("left");
   
   // H列（ファイル名）の古い数式のアップデート（未処理の数式セルが対象）
   const lastRow = sheet.getLastRow();
-  if (lastRow >= 2) {
-    const formulas = sheet.getRange(2, 8, lastRow - 1, 1).getFormulas();
+  if (lastRow >= 3) {
+    const formulas = sheet.getRange(3, 8, lastRow - 2, 1).getFormulas();
     for (let i = 0; i < formulas.length; i++) {
-      const rowNum = i + 2;
+      const rowNum = i + 3;
       // 数式が入っている行のみアップデート
       if (formulas[i][0] !== "") {
         const formula = `=TEXT(C${rowNum}, "yyyy.MM.dd")&"_"&D${rowNum}&"_"&E${rowNum}&"_"&F${rowNum}&"円"&IF(G${rowNum}<>"", "_"&G${rowNum}, "")`;

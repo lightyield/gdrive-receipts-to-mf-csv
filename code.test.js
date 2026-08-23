@@ -59,7 +59,7 @@ mockFolder = {
 
 mockSheet = {
   appendRow: jest.fn(),
-  getLastRow: jest.fn().mockReturnValue(2),
+  getLastRow: jest.fn().mockReturnValue(3),
   deleteRow: jest.fn(),
   getRange: jest.fn().mockReturnValue({
     setFormula: jest.fn(),
@@ -68,14 +68,16 @@ mockSheet = {
     getFormula: jest.fn().mockReturnValue(''),
     setValues: jest.fn(),
     setHorizontalAlignment: jest.fn(),
-    getFormulas: jest.fn().mockReturnValue([['=TEXT(C2, ...)']])
+    getFormulas: jest.fn().mockReturnValue([['=TEXT(C3, ...)']])
   }),
   getDataRange: jest.fn().mockReturnValue({
     getValues: jest.fn().mockReturnValue([
-      // ヘッダー行
+      // 1行目: 集計行
+      ['合計件数: 1件', '', '', '', '', '合計金額: 1,500円', '', '', '', '', ''],
+      // 2行目: ヘッダー行
       ['取込経路', '受信日時', '取引日付', '勘定科目', '取引先名', '取引金額', 'メモ', 'ファイル名', 'ファイルID', '領収書リンク', 'CSV出力'],
-      // 2行目 (Gmail未処理データ)
-      ['Gmail', new Date(), '2026/08/18', '旅費交通費', 'タクシー', 1500, '出張', '=TEXT(C2, ...)', 'mock-file-id', 'https://mock-file-url', '']
+      // 3行目 (Gmail未処理データ)
+      ['Gmail', new Date(), '2026/08/18', '旅費交通費', 'タクシー', 1500, '出張', '=TEXT(C3, ...)', 'mock-file-id', 'https://mock-file-url', '']
     ])
   })
 };
@@ -205,11 +207,11 @@ describe('code.js テストスイート', () => {
 
     setFilenameFormula(mockSheet);
 
-    expect(mockSheet.getRange).toHaveBeenCalledWith(2, 8);
+    expect(mockSheet.getRange).toHaveBeenCalledWith(3, 8);
     expect(mockRangeFormula.setFormula).toHaveBeenCalledWith(
-      `=TEXT(C2, "yyyy.MM.dd")&"_"&D2&"_"&E2&"_"&F2&"円"&IF(G2<>"", "_"&G2, "")`
+      `=TEXT(C3, "yyyy.MM.dd")&"_"&D3&"_"&E3&"_"&F3&"円"&IF(G3<>"", "_"&G3, "")`
     );
-    expect(mockSheet.getRange).toHaveBeenCalledWith(2, 6);
+    expect(mockSheet.getRange).toHaveBeenCalledWith(3, 6);
     expect(mockRangeFormat.setNumberFormat).toHaveBeenCalledWith('#,##0');
   });
 
@@ -241,7 +243,7 @@ describe('code.js テストスイート', () => {
       setValue: jest.fn()
     };
     mockSheet.getRange = jest.fn().mockImplementation((row, col) => {
-      if (row === 2 && col === 8) return mockCellRange;
+      if (row === 3 && col === 8) return mockCellRange;
       return {};
     });
 
@@ -255,8 +257,9 @@ describe('code.js テストスイート', () => {
     // A列を「手動」にしたモックデータを返すように一時的に設定
     mockSheet.getDataRange = jest.fn().mockReturnValue({
       getValues: jest.fn().mockReturnValue([
+        ['合計件数: 1件', '', '', '', '', '合計金額: 1,500円', '', '', '', '', ''],
         ['取込経路', '受信日時', '取引日付', '勘定科目', '取引先名', '取引金額', 'メモ', 'ファイル名', 'ファイルID', '領収書リンク', 'CSV出力'],
-        ['手動', new Date(), '2026/08/18', '旅費交通費', 'タクシー', 1500, '出張', '=TEXT(C2, ...)', 'mock-file-id', 'https://mock-file-url', '']
+        ['手動', new Date(), '2026/08/18', '旅費交通費', 'タクシー', 1500, '出張', '=TEXT(C3, ...)', 'mock-file-id', 'https://mock-file-url', '']
       ])
     });
 
@@ -265,7 +268,7 @@ describe('code.js テストスイート', () => {
       setValue: jest.fn()
     };
     mockSheet.getRange = jest.fn().mockImplementation((row, col) => {
-      if (row === 2 && col === 8) return mockCellRange;
+      if (row === 3 && col === 8) return mockCellRange;
       return {};
     });
 
@@ -284,20 +287,20 @@ describe('code.js テストスイート', () => {
       setValue: jest.fn()
     };
     mockSheet.getRange = jest.fn().mockImplementation((row, col) => {
-      if (row === 2 && col === 8) return mockCellRange;
-      if (row === 2 && col === 11) return mockStatusRange;
+      if (row === 3 && col === 8) return mockCellRange;
+      if (row === 3 && col === 11) return mockStatusRange;
       return {};
     });
 
     exportMFSheetsCSV();
 
     // K列（11列目）にステータス（CSVファイル名）が書き込まれることを確認
-    expect(mockSheet.getRange).toHaveBeenCalledWith(2, 11);
+    expect(mockSheet.getRange).toHaveBeenCalledWith(3, 11);
     expect(mockStatusRange.setValue).toHaveBeenCalledWith(expect.stringContaining('mf_journal_'));
     expect(mockFolder.createFile).toHaveBeenCalled();
   });
 
-  test('setupCategoryValidation() - A1:K1にヘッダーがセットされ、D列(4)にプルダウン、F列(6)に金額フォーマット、H列の数式がアップデートされること', () => {
+  test('setupCategoryValidation() - A2:K2にヘッダーがセットされ、D列(4)にプルダウン、F列(6)に金額フォーマット、H列の数式がアップデートされること', () => {
     const mockRangeHeader = { setValues: jest.fn(), setHorizontalAlignment: jest.fn() };
     const mockRangeValidation = { setDataValidation: jest.fn() };
     const mockRangeFormat = { setNumberFormat: jest.fn() };
@@ -307,14 +310,21 @@ describe('code.js テストスイート', () => {
     const mockRangeFormulaCell = {
       setFormula: jest.fn()
     };
+    const mockRangeDefault = {
+      setFormula: jest.fn().mockReturnThis(),
+      setNumberFormat: jest.fn().mockReturnThis(),
+      setFontWeight: jest.fn().mockReturnThis(),
+      setBackground: jest.fn().mockReturnThis(),
+      setHorizontalAlignment: jest.fn().mockReturnThis()
+    };
 
     mockSheet.getRange = jest.fn().mockImplementation((arg1, arg2, arg3, arg4) => {
-      if (arg1 === 'A1:K1') return mockRangeHeader;
-      if (arg1 === 'D2:D1000') return mockRangeValidation;
-      if (arg1 === 'F2:F1000') return mockRangeFormat;
-      if (arg1 === 2 && arg2 === 8 && arg3 !== undefined) return mockRangeFormulaCol;
-      if (arg1 === 2 && arg2 === 8 && arg3 === undefined) return mockRangeFormulaCell;
-      return {};
+      if (arg1 === 'A2:K2') return mockRangeHeader;
+      if (arg1 === 'D3:D1000') return mockRangeValidation;
+      if (arg1 === 'F3:F1000') return mockRangeFormat;
+      if (arg1 === 3 && arg2 === 8 && arg3 !== undefined) return mockRangeFormulaCol;
+      if (arg1 === 3 && arg2 === 8 && arg3 === undefined) return mockRangeFormulaCell;
+      return mockRangeDefault;
     });
 
     setupCategoryValidation();
@@ -325,7 +335,7 @@ describe('code.js テストスイート', () => {
     expect(mockRangeValidation.setDataValidation).toHaveBeenCalledWith('mock-validation-rule');
     expect(mockRangeFormat.setNumberFormat).toHaveBeenCalledWith('#,##0');
     expect(mockRangeFormulaCell.setFormula).toHaveBeenCalledWith(
-      `=TEXT(C2, "yyyy.MM.dd")&"_"&D2&"_"&E2&"_"&F2&"円"&IF(G2<>"", "_"&G2, "")`
+      `=TEXT(C3, "yyyy.MM.dd")&"_"&D3&"_"&E3&"_"&F3&"円"&IF(G3<>"", "_"&G3, "")`
     );
   });
 
@@ -347,12 +357,13 @@ describe('code.js テストスイート', () => {
       mockUi.alert.mockReturnValue('YES'); // ui.Button.YES
 
       // K列(11列目)に値がある行とない行を混在させる
-      // 2行目: CSV未出力 (K列='')
-      // 3行目: CSV出力済み (K列='mf_journal_...')
+      // 3行目: CSV未出力 (K列='')
       // 4行目: CSV出力済み (K列='mf_journal_...')
-      // 5行目: CSV未出力 (K列='')
+      // 5行目: CSV出力済み (K列='mf_journal_...')
+      // 6行目: CSV未出力 (K列='')
       mockSheet.getDataRange = jest.fn().mockReturnValue({
         getValues: jest.fn().mockReturnValue([
+          ['合計件数: 2件', '', '', '', '', '合計金額: 7,000円', '', '', '', '', ''],
           ['取込経路', '受信日時', '取引日付', '勘定科目', '取引先名', '取引金額', 'メモ', 'ファイル名', 'ファイルID', '領収書リンク', 'CSV出力'],
           ['Gmail', new Date(), '2026/08/18', '旅費交通費', 'タクシー', 1500, '', 'file1.pdf', 'id1', 'url1', ''],
           ['Gmail', new Date(), '2026/08/18', '旅費交通費', 'タクシー', 2000, '', 'file2.pdf', 'id2', 'url2', 'mf_journal_1.csv'],
@@ -364,8 +375,8 @@ describe('code.js テストスイート', () => {
       deleteExportedReceipts();
 
       expect(mockSheet.deleteRow).toHaveBeenCalledTimes(2);
-      expect(mockSheet.deleteRow.mock.calls[0][0]).toBe(4);
-      expect(mockSheet.deleteRow.mock.calls[1][0]).toBe(3);
+      expect(mockSheet.deleteRow.mock.calls[0][0]).toBe(5);
+      expect(mockSheet.deleteRow.mock.calls[1][0]).toBe(4);
       expect(mockUi.alert).toHaveBeenLastCalledWith(
         '処理完了',
         '2件のレコードを削除しました。',
