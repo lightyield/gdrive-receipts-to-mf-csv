@@ -673,9 +673,50 @@ function setupCategoryValidation() {
     }
   }
   
+  // ==========================================
+  // 5. 別シート「集計」の作成・自動設定
+  // ==========================================
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const dataSheetName = sheet.getName();
+  
+  let summarySheet = ss.getSheetByName("集計");
+  if (!summarySheet) {
+    summarySheet = ss.insertSheet("集計");
+  }
+  
+  summarySheet.clear();
+  
+  // タイトル
+  summarySheet.getRange("A1").setValue("取込経路別集計").setFontSize(14).setFontWeight("bold");
+  
+  // ヘッダー
+  summarySheet.getRange("A3:C3").setValues([["取込経路", "件数", "合計金額"]]);
+  summarySheet.getRange("A3:C3").setFontWeight("bold").setBackground("#e6f2ff").setHorizontalAlignment("left");
+  
+  // Gmail集計
+  summarySheet.getRange("A4").setValue("Gmail");
+  summarySheet.getRange("B4").setFormula(`=COUNTIF('${dataSheetName}'!A2:A, "Gmail")`).setNumberFormat('#,##0"件"');
+  summarySheet.getRange("C4").setFormula(`=SUMIF('${dataSheetName}'!A2:A, "Gmail", '${dataSheetName}'!F2:F)`).setNumberFormat('#,##0"円"');
+  
+  // 手動集計
+  summarySheet.getRange("A5").setValue("手動");
+  summarySheet.getRange("B5").setFormula(`=COUNTIF('${dataSheetName}'!A2:A, "手動")`).setNumberFormat('#,##0"件"');
+  summarySheet.getRange("C5").setFormula(`=SUMIF('${dataSheetName}'!A2:A, "手動", '${dataSheetName}'!F2:F)`).setNumberFormat('#,##0"円"');
+  
+  // 総合計
+  summarySheet.getRange("A6").setValue("総合計");
+  summarySheet.getRange("B6").setFormula("=SUM(B4:B5)").setNumberFormat('#,##0"件"');
+  summarySheet.getRange("C6").setFormula("=SUM(C4:C5)").setNumberFormat('#,##0"円"');
+  summarySheet.getRange("A6:C6").setFontWeight("bold");
+  
+  // 幅調整
+  summarySheet.autoResizeColumn(1);
+  summarySheet.autoResizeColumn(2);
+  summarySheet.autoResizeColumn(3);
+  
   SpreadsheetApp.getUi().alert(
     '設定・修復完了', 
-    'A1:K1のヘッダー再設定、D列のプルダウン設定、F列の金額フォーマット（カンマ区切り）の設定、およびH列の未処理ファイル名数式のアップデートが完了しました。', 
+    'A1:K1のヘッダー再設定、D列のプルダウン設定、F列の金額フォーマット（カンマ区切り）の設定、H列の未処理ファイル名数式のアップデート、および「集計」シートの作成・更新が完了しました。', 
     SpreadsheetApp.getUi().ButtonSet.OK
   );
 }
