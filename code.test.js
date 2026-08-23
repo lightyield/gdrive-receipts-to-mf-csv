@@ -57,7 +57,25 @@ mockFolder = {
   })
 };
 
+const mockRangeSummary = {
+  setValue: jest.fn().mockReturnThis(),
+  setFontSize: jest.fn().mockReturnThis(),
+  setFontWeight: jest.fn().mockReturnThis(),
+  setValues: jest.fn().mockReturnThis(),
+  setBackground: jest.fn().mockReturnThis(),
+  setHorizontalAlignment: jest.fn().mockReturnThis(),
+  setFormula: jest.fn().mockReturnThis(),
+  setNumberFormat: jest.fn().mockReturnThis()
+};
+
+const mockSummarySheet = {
+  clear: jest.fn(),
+  getRange: jest.fn().mockReturnValue(mockRangeSummary),
+  autoResizeColumn: jest.fn()
+};
+
 mockSheet = {
+  getName: jest.fn().mockReturnValue('シート1'),
   appendRow: jest.fn(),
   getLastRow: jest.fn().mockReturnValue(2),
   deleteRow: jest.fn(),
@@ -81,7 +99,9 @@ mockSheet = {
 };
 
 mockSpreadsheet = {
-  getActiveSheet: jest.fn().mockReturnValue(mockSheet)
+  getActiveSheet: jest.fn().mockReturnValue(mockSheet),
+  getSheetByName: jest.fn().mockReturnValue(mockSummarySheet),
+  insertSheet: jest.fn().mockReturnValue(mockSummarySheet)
 };
 
 mockGmailMessages = [{
@@ -327,6 +347,15 @@ describe('code.js テストスイート', () => {
     expect(mockRangeFormulaCell.setFormula).toHaveBeenCalledWith(
       `=TEXT(C2, "yyyy.MM.dd")&"_"&D2&"_"&E2&"_"&F2&"円"&IF(G2<>"", "_"&G2, "")`
     );
+
+    // 集計シートの設定に関するアサーション
+    expect(mockSpreadsheet.getSheetByName).toHaveBeenCalledWith("集計");
+    expect(mockSummarySheet.clear).toHaveBeenCalled();
+    expect(mockSummarySheet.getRange).toHaveBeenCalledWith("A1");
+    expect(mockRangeSummary.setValue).toHaveBeenCalledWith("取込経路別集計");
+    expect(mockSummarySheet.getRange).toHaveBeenCalledWith("B4");
+    expect(mockRangeSummary.setFormula).toHaveBeenCalledWith("=COUNTIF('シート1'!A2:A, \"Gmail\")");
+    expect(mockSummarySheet.autoResizeColumn).toHaveBeenCalledWith(1);
   });
 
   describe('deleteExportedReceipts() テスト', () => {
