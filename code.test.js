@@ -1,6 +1,15 @@
 const fs = require('fs');
 const path = require('path');
 
+// GAS イテレータヘルパー
+function createIterator(items) {
+  let index = 0;
+  return {
+    hasNext: jest.fn().mockImplementation(() => index < items.length),
+    next: jest.fn().mockImplementation(() => items[index++])
+  };
+}
+
 // GAS グローバルモックの定義 (evalする前に設定する必要がある)
 let mockSheet;
 let mockSpreadsheet;
@@ -9,6 +18,7 @@ let mockGmailMessages;
 let mockInboxFolder;
 let mockRenamedFolder;
 let mockImportedFolder;
+let mockExportedFolder;
 let mockParentFolder;
 let mockFile;
 let mockProperties;
@@ -19,7 +29,8 @@ mockProperties = {
   FOLDER_ID: 'mock-folder-id',
   INBOX_FOLDER_ID: 'inbox-folder-id',
   RENAMED_FOLDER_ID: 'renamed-folder-id',
-  IMPORTED_FOLDER_ID: 'imported-folder-id'
+  IMPORTED_FOLDER_ID: 'imported-folder-id',
+  EXPORTED_FOLDER_ID: 'exported-folder-id'
 };
 
 mockFile = {
@@ -29,41 +40,31 @@ mockFile = {
   copyBlob: jest.fn().mockReturnThis(),
   setName: jest.fn().mockReturnThis(),
   moveTo: jest.fn().mockReturnThis(),
-  getParents: jest.fn().mockReturnValue({
-    hasNext: jest.fn().mockReturnValue(true),
-    next: jest.fn().mockReturnValue({
-      getId: jest.fn().mockReturnValue('inbox-folder-id')
-    })
-  })
+  getParents: jest.fn().mockImplementation(() => createIterator([{ getId: () => 'exported-folder-id' }]))
 };
 
 mockInboxFolder = {
   getId: jest.fn().mockReturnValue('inbox-folder-id'),
   createFile: jest.fn().mockReturnValue(mockFile),
-  getFiles: jest.fn().mockReturnValue({
-    hasNext: jest.fn().mockReturnValue(false),
-    next: jest.fn()
-  })
+  getFiles: jest.fn().mockImplementation(() => createIterator([]))
 };
 
 mockRenamedFolder = {
   getId: jest.fn().mockReturnValue('renamed-folder-id'),
   createFile: jest.fn().mockReturnValue(mockFile),
-  getFiles: jest.fn().mockReturnValue({
-    hasNext: jest.fn()
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false),
-    next: jest.fn().mockReturnValue(mockFile)
-  })
+  getFiles: jest.fn().mockImplementation(() => createIterator([mockFile]))
 };
 
 mockImportedFolder = {
   getId: jest.fn().mockReturnValue('imported-folder-id'),
   createFile: jest.fn().mockReturnValue(mockFile),
-  getFiles: jest.fn().mockReturnValue({
-    hasNext: jest.fn().mockReturnValue(false),
-    next: jest.fn()
-  })
+  getFiles: jest.fn().mockImplementation(() => createIterator([]))
+};
+
+mockExportedFolder = {
+  getId: jest.fn().mockReturnValue('exported-folder-id'),
+  createFile: jest.fn().mockReturnValue(mockFile),
+  getFiles: jest.fn().mockImplementation(() => createIterator([]))
 };
 
 mockParentFolder = {
@@ -72,6 +73,7 @@ mockParentFolder = {
     if (name === '01.受付') return mockInboxFolder;
     if (name === '02.リネーム済み') return mockRenamedFolder;
     if (name === '03.インポート済み') return mockImportedFolder;
+    if (name === '04.CSV出力済み') return mockExportedFolder;
     return {};
   }),
   getFoldersByName: jest.fn().mockImplementation(name => {
@@ -79,10 +81,8 @@ mockParentFolder = {
     if (name === '01.受付') target = mockInboxFolder;
     if (name === '02.リネーム済み') target = mockRenamedFolder;
     if (name === '03.インポート済み') target = mockImportedFolder;
-    return {
-      hasNext: jest.fn().mockReturnValue(!!target),
-      next: jest.fn().mockReturnValue(target)
-    };
+    if (name === '04.CSV出力済み') target = mockExportedFolder;
+    return createIterator(target ? [target] : []);
   }),
   createFile: jest.fn().mockReturnValue(mockFile)
 };
@@ -173,6 +173,7 @@ global.DriveApp = {
     if (id === 'inbox-folder-id') return mockInboxFolder;
     if (id === 'renamed-folder-id') return mockRenamedFolder;
     if (id === 'imported-folder-id') return mockImportedFolder;
+    if (id === 'exported-folder-id') return mockExportedFolder;
     return mockParentFolder;
   }),
   getFileById: jest.fn().mockReturnValue(mockFile)
@@ -224,24 +225,19 @@ beforeEach(() => {
   // ファイル名の初期値リセット
   mockFile.getName = jest.fn().mockReturnValue('mock-file-name.pdf');
 
-  // getFilesのhasNextの初期状態のリセット
-  mockRenamedFolder.getFiles = jest.fn().mockReturnValue({
-    hasNext: jest.fn()
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false),
-    next: jest.fn().mockReturnValue(mockFile)
-  });
+  // getParents のデフォルト（exported-folder-id を親に持つ）
+  mockFile.getParents = jest.fn().mockImplementation(() => createIterator([{ getId: () => 'exported-folder-id' }]));
+
+  // getFilesの初期状態のリセット
+  mockRenamedFolder.getFiles = jest.fn().mockImplementation(() => createIterator([mockFile]));
 });
 
-describe('code.js テストスイート（ワークフロー一本化）', () => {
+describe('code.js テストスイート（ワークフロー一本化・4フォルダ構成）', () => {
   test('importGmailReceipts() - 添付ファイルありのメールが「01.受付」に保存され、スプレッドシートへは記帳されないこと', () => {
     importGmailReceipts();
 
-    // 01.受付フォルダにファイルが保存されること
     expect(mockInboxFolder.createFile).toHaveBeenCalled();
-    // スプレッドシートには行追加されないこと
     expect(mockSheet.appendRow).not.toHaveBeenCalled();
-    // ラベルの更新が行われること
     expect(mockGmailThreads[0].addLabel).toHaveBeenCalled();
     expect(mockGmailThreads[0].removeLabel).toHaveBeenCalled();
   });
@@ -257,7 +253,6 @@ describe('code.js テストスイート（ワークフロー一本化）', () =>
 
     importRenamedReceipts();
 
-    // スプレッドシートに10列で追加されること
     expect(mockSheet.appendRow).toHaveBeenCalledWith([
       expect.any(Date),
       '2026/08/15',
@@ -270,14 +265,12 @@ describe('code.js テストスイート（ワークフロー一本化）', () =>
       'https://mock-file-url',
       ''
     ]);
-    // 03.インポート済みフォルダへ移動されること
     expect(mockFile.moveTo).toHaveBeenCalledWith(mockImportedFolder);
-    // E列（5列目）に金額フォーマットが適用されること
     expect(mockSheet.getRange).toHaveBeenCalledWith(2, 5);
     expect(mockFormatRange.setNumberFormat).toHaveBeenCalledWith('#,##0');
   });
 
-  test('exportMFSheetsCSV() - リネーム済みでCSV未出力のデータがCSV出力され、J列(10)にファイル名が書き込まれること', () => {
+  test('exportMFSheetsCSV() - リネーム済みでCSV未出力のデータがCSV出力され、J列(10)にファイル名が書き込まれ、実ファイルが「04.CSV出力済み」へ移動されること', () => {
     const mockStatusRange = {
       setValue: jest.fn()
     };
@@ -288,10 +281,10 @@ describe('code.js テストスイート（ワークフロー一本化）', () =>
 
     exportMFSheetsCSV();
 
-    // J列（10列目）にステータス（CSVファイル名）が書き込まれることを確認
     expect(mockSheet.getRange).toHaveBeenCalledWith(2, 10);
     expect(mockStatusRange.setValue).toHaveBeenCalledWith(expect.stringContaining('mf_journal_'));
     expect(mockParentFolder.createFile).toHaveBeenCalled();
+    expect(mockFile.moveTo).toHaveBeenCalledWith(mockExportedFolder);
   });
 
   test('setupCategoryValidation() - A1:J1にヘッダーがセットされ、C列(3)にプルダウン、E列(5)に金額フォーマット、集計シートが設定されること', () => {
@@ -314,7 +307,6 @@ describe('code.js テストスイート（ワークフロー一本化）', () =>
     expect(mockRangeValidation.setDataValidation).toHaveBeenCalledWith('mock-validation-rule');
     expect(mockRangeFormat.setNumberFormat).toHaveBeenCalledWith('#,##0');
 
-    // 集計シートの設定に関するアサーション
     expect(mockSpreadsheet.getSheetByName).toHaveBeenCalledWith("集計");
     expect(mockSummarySheet.clear).toHaveBeenCalled();
     expect(mockSummarySheet.getRange).toHaveBeenCalledWith("A1");
@@ -332,34 +324,53 @@ describe('code.js テストスイート（ワークフロー一本化）', () =>
 
       expect(mockUi.alert).toHaveBeenCalledWith(
         '確認',
-        expect.stringContaining('CSV出力済みのレコードを削除しますか？'),
+        expect.stringContaining('「04.CSV出力済み」フォルダに移動完了しているレコードを台帳から削除しますか？'),
         'YES_NO'
       );
       expect(mockSheet.deleteRow).not.toHaveBeenCalled();
     });
 
-    test('ユーザーが「はい」を選択した場合、CSV出力済みの行が下から順に削除されること', () => {
+    test('ユーザーが「はい」を選択した場合、「04.CSV出力済み」フォルダに実ファイルが存在する行のみ削除されること', () => {
       mockUi.alert.mockReturnValue('YES'); // ui.Button.YES
 
-      // J列(10列目)に値がある行とない行を混在させる (10列構成)
+      // ファイルモックをIDごとに分岐
+      global.DriveApp.getFileById = jest.fn().mockImplementation(id => {
+        if (id === 'id-in-exported') {
+          return {
+            getParents: jest.fn().mockImplementation(() => createIterator([{ getId: () => 'exported-folder-id' }]))
+          };
+        }
+        if (id === 'id-in-other-folder') {
+          return {
+            getParents: jest.fn().mockImplementation(() => createIterator([{ getId: () => 'other-folder-id' }]))
+          };
+        }
+        return mockFile;
+      });
+
+      // 10列構成
+      // 2行目: CSV未出力 (J列='')
+      // 3行目: CSV出力済み ＆ 04.CSV出力済みに存在 (id-in-exported) -> 削除対象
+      // 4行目: CSV出力済み だが 04.CSV出力済みに存在しない (id-in-other-folder) -> スキップ
+      // 5行目: CSV未出力 (J列='')
       mockSheet.getDataRange = jest.fn().mockReturnValue({
         getValues: jest.fn().mockReturnValue([
           ['登録日時', '取引日付', '勘定科目', '取引先名', '取引金額', 'メモ', 'ファイル名', 'ファイルID', '領収書リンク', 'CSV出力'],
           [new Date(), '2026/08/18', '旅費交通費', 'タクシー', 1500, '', 'file1.pdf', 'id1', 'url1', ''],
-          [new Date(), '2026/08/18', '旅費交通費', 'タクシー', 2000, '', 'file2.pdf', 'id2', 'url2', 'mf_journal_1.csv'],
-          [new Date(), '2026/08/19', '通信費', 'インターネット', 5000, '', 'file3.pdf', 'id3', 'url3', 'mf_journal_1.csv'],
+          [new Date(), '2026/08/18', '旅費交通費', 'タクシー', 2000, '', 'file2.pdf', 'id-in-exported', 'url2', 'mf_journal_1.csv'],
+          [new Date(), '2026/08/19', '通信費', 'インターネット', 5000, '', 'file3.pdf', 'id-in-other-folder', 'url3', 'mf_journal_1.csv'],
           [new Date(), '2026/08/19', '会議費', 'カフェ', 800, '', 'file4.pdf', 'id4', 'url4', '']
         ])
       });
 
       deleteExportedReceipts();
 
-      expect(mockSheet.deleteRow).toHaveBeenCalledTimes(2);
-      expect(mockSheet.deleteRow.mock.calls[0][0]).toBe(4);
-      expect(mockSheet.deleteRow.mock.calls[1][0]).toBe(3);
+      // 3行目のみ削除されること
+      expect(mockSheet.deleteRow).toHaveBeenCalledTimes(1);
+      expect(mockSheet.deleteRow).toHaveBeenCalledWith(3);
       expect(mockUi.alert).toHaveBeenLastCalledWith(
         '処理完了',
-        '2件のレコードを削除しました。',
+        expect.stringContaining('1件のレコードを削除しました。'),
         'OK'
       );
     });

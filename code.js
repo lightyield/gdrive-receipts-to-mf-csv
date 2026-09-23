@@ -199,15 +199,17 @@ function importRenamedReceipts() {
   SpreadsheetApp.getUi().alert('取込完了', msg, SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
-// 領収書フォルダ（01.受付・02.リネーム済み・03.インポート済み）を取得するヘルパー関数
+// 領収書フォルダ（01.受付・02.リネーム済み・03.インポート済み・04.CSV出力済み）を取得するヘルパー関数
 function getReceiptFolders() {
   const inboxId = PropertiesService.getScriptProperties().getProperty('INBOX_FOLDER_ID');
   const renamedId = PropertiesService.getScriptProperties().getProperty('RENAMED_FOLDER_ID');
   const importedId = PropertiesService.getScriptProperties().getProperty('IMPORTED_FOLDER_ID');
+  const exportedId = PropertiesService.getScriptProperties().getProperty('EXPORTED_FOLDER_ID');
 
   let inboxFolder = null;
   let renamedFolder = null;
   let importedFolder = null;
+  let exportedFolder = null;
 
   // 1. スクリプトプロパティで個別に設定されている場合はそれを優先
   if (inboxId) {
@@ -231,47 +233,47 @@ function getReceiptFolders() {
       Logger.log('警告: IMPORTED_FOLDER_ID で指定されたフォルダの取得に失敗しました: ' + e.toString());
     }
   }
+  if (exportedId) {
+    try {
+      exportedFolder = DriveApp.getFolderById(exportedId);
+    } catch (e) {
+      Logger.log('警告: EXPORTED_FOLDER_ID で指定されたフォルダの取得に失敗しました: ' + e.toString());
+    }
+  }
 
   // 2. 設定されていない場合は、FOLDER_ID から探索（存在しない場合は自動作成）
-  if (!inboxFolder || !renamedFolder || !importedFolder) {
+  if (!inboxFolder || !renamedFolder || !importedFolder || !exportedFolder) {
     if (!FOLDER_ID) {
-      throw new Error('FOLDER_ID または INBOX_FOLDER_ID / RENAMED_FOLDER_ID / IMPORTED_FOLDER_ID が設定されていません。');
+      throw new Error('FOLDER_ID または各フォルダIDが設定されていません。');
     }
     const parentFolder = DriveApp.getFolderById(FOLDER_ID);
 
     if (!inboxFolder) {
       const inboxFolders = parentFolder.getFoldersByName('01.受付');
-      if (inboxFolders.hasNext()) {
-        inboxFolder = inboxFolders.next();
-      } else {
-        inboxFolder = parentFolder.createFolder('01.受付');
-      }
+      inboxFolder = inboxFolders.hasNext() ? inboxFolders.next() : parentFolder.createFolder('01.受付');
     }
 
     if (!renamedFolder) {
       const renamedFolders = parentFolder.getFoldersByName('02.リネーム済み');
-      if (renamedFolders.hasNext()) {
-        renamedFolder = renamedFolders.next();
-      } else {
-        renamedFolder = parentFolder.createFolder('02.リネーム済み');
-      }
+      renamedFolder = renamedFolders.hasNext() ? renamedFolders.next() : parentFolder.createFolder('02.リネーム済み');
     }
 
     if (!importedFolder) {
       const importedFolders = parentFolder.getFoldersByName('03.インポート済み');
-      if (importedFolders.hasNext()) {
-        importedFolder = importedFolders.next();
-      } else {
-        importedFolder = parentFolder.createFolder('03.インポート済み');
-      }
+      importedFolder = importedFolders.hasNext() ? importedFolders.next() : parentFolder.createFolder('03.インポート済み');
+    }
+
+    if (!exportedFolder) {
+      const exportedFolders = parentFolder.getFoldersByName('04.CSV出力済み');
+      exportedFolder = exportedFolders.hasNext() ? exportedFolders.next() : parentFolder.createFolder('04.CSV出力済み');
     }
   }
 
-  return { inboxFolder, renamedFolder, importedFolder };
+  return { inboxFolder, renamedFolder, importedFolder, exportedFolder };
 }
 
 // ==========================================
-// 3. 「リネーム済み」データをマネーフォワードCSVに出力
+// 3. 「リネーム済み」データをマネーフォワードCSVに出力 ＆ 「04.CSV出力済み」へ実ファイルを移動
 // ==========================================
 function exportMFSheetsCSV() {
   if (!FOLDER_ID) {
@@ -279,11 +281,21 @@ function exportMFSheetsCSV() {
     SpreadsheetApp.getUi().alert('エラー', 'スクリプトのプロパティに FOLDER_ID が設定されていません。プロジェクトの設定から設定してください。', SpreadsheetApp.getUi().ButtonSet.OK);
     return;
   }
+  let folders;
+  try {
+    folders = getReceiptFolders();
+  } catch (e) {
+    Logger.log('エラー: フォルダの取得に失敗しました。' + e.toString());
+    SpreadsheetApp.getUi().alert('エラー', 'フォルダの取得に失敗しました:\n' + e.toString(), SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   const dataRange = sheet.getDataRange();
   const values = dataRange.getValues();
   
-  const folder = DriveApp.getFolderById(FOLDER_ID);
+  const parentFolder = DriveApp.getFolderById(FOLDER_ID);
+  const exportedFolder = folders.exportedFolder;
   
   const exportRows = [];
   
@@ -292,6 +304,7 @@ function exportMFSheetsCSV() {
     const rowNum = i + 1;
     
     const fileNameVal = row[6]; // G列: ファイル名 (7列目)
+    const fileId = row[7];      // H列: ファイルID (8列目)
     const csvStatus = row[9] || ""; // J列: CSV出力ステータス (10列目)
     
     // G列にファイル名が入っており、かつJ列（CSV出力）が空である行を対象とする
@@ -315,7 +328,8 @@ function exportMFSheetsCSV() {
         debit: debit,
         vendor: vendor,
         amount: amount,
-        memo: row[5] // F列: メモ
+        memo: row[5], // F列: メモ
+        fileId: fileId
       });
     }
   }
@@ -378,17 +392,27 @@ function exportMFSheetsCSV() {
     const blob = Utilities.newBlob(csvContent, 'text/csv', csvFileName);
     const sjisBlob = blob.getAs('text/csv').setDataFromString(csvContent, 'Shift_JIS');
     
-    // GoogleドライブにCSVを保存
-    const csvFile = folder.createFile(sjisBlob);
+    // Googleドライブ親フォルダにCSVを保存
+    const csvFile = parentFolder.createFile(sjisBlob);
     
-    // 対象行 of J列にCSVファイル名を書き込む
+    // 対象行のJ列にCSVファイル名を書き込み ＆ 実ファイルを「04.CSV出力済み」フォルダへ移動
     for (let i = 0; i < exportRows.length; i++) {
-      sheet.getRange(exportRows[i].rowNum, 10).setValue(csvFileName);
+      const item = exportRows[i];
+      sheet.getRange(item.rowNum, 10).setValue(csvFileName);
+      
+      if (item.fileId) {
+        try {
+          const file = DriveApp.getFileById(item.fileId);
+          file.moveTo(exportedFolder);
+        } catch (e) {
+          Logger.log(`警告: ファイルID ${item.fileId} の「04.CSV出力済み」フォルダへの移動に失敗しました: ` + e.toString());
+        }
+      }
     }
     
     SpreadsheetApp.getUi().alert(
       '出力完了', 
-      `${exportRows.length}件のデータをマネーフォワード用CSVとして出力し、J列（CSV出力状況）を更新しました。\n\nCSVファイルURL:\n${csvFile.getUrl()}`, 
+      `${exportRows.length}件のデータをマネーフォワード用CSVとして出力し、対象ファイルを「04.CSV出力済み」へ移動しました。\n\nCSVファイルURL:\n${csvFile.getUrl()}`, 
       SpreadsheetApp.getUi().ButtonSet.OK
     );
   } catch (e) {
@@ -398,16 +422,27 @@ function exportMFSheetsCSV() {
 }
 
 // ==========================================
-// 4. 「CSV出力済み」レコードを一括削除
+// 4. 「CSV出力済み」レコードを一括削除（04.CSV出力済みフォルダ内のファイルのみ対象）
 // ==========================================
 function deleteExportedReceipts() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   const ui = SpreadsheetApp.getUi();
   
+  let folders;
+  try {
+    folders = getReceiptFolders();
+  } catch (e) {
+    Logger.log('エラー: フォルダの取得に失敗しました。' + e.toString());
+    ui.alert('エラー', 'フォルダの取得に失敗しました:\n' + e.toString(), ui.ButtonSet.OK);
+    return;
+  }
+  
+  const exportedFolderId = folders.exportedFolder.getId();
+  
   // ユーザーに確認
   const response = ui.alert(
     '確認',
-    'CSV出力済みのレコードを削除しますか？\n（Googleドライブ上の実ファイルは削除されません）',
+    '「04.CSV出力済み」フォルダに移動完了しているレコードを台帳から削除しますか？\n（Googleドライブ上の実ファイルは削除されません）',
     ui.ButtonSet.YES_NO
   );
   
@@ -418,23 +453,54 @@ function deleteExportedReceipts() {
   const dataRange = sheet.getDataRange();
   const values = dataRange.getValues();
   let deleteCount = 0;
+  let skippedCount = 0;
   
   // スプレッドシートの行削除による行ずれを防ぐため、下からループを回す
   // 2行目 (インデックス 1) までループ
   for (let i = values.length - 1; i >= 1; i--) {
     const rowNum = i + 1;
-    const csvStatus = values[i][9] || ""; // J列: CSV出力
+    const fileId = values[i][7];          // H列: ファイルID (8列目)
+    const csvStatus = values[i][9] || ""; // J列: CSV出力 (10列目)
     
     if (csvStatus !== "") {
-      sheet.deleteRow(rowNum);
-      deleteCount++;
+      let isInOutFolder = false;
+      if (fileId) {
+        try {
+          const file = DriveApp.getFileById(fileId);
+          const parents = file.getParents();
+          while (parents.hasNext()) {
+            if (parents.next().getId() === exportedFolderId) {
+              isInOutFolder = true;
+              break;
+            }
+          }
+        } catch (e) {
+          Logger.log(`警告: 行 ${rowNum} のファイル取得に失敗しました: ` + e.toString());
+        }
+      }
+      
+      if (isInOutFolder) {
+        sheet.deleteRow(rowNum);
+        deleteCount++;
+      } else {
+        Logger.log(`スキップ: 行 ${rowNum} のファイルは「04.CSV出力済み」フォルダに存在しないため削除しませんでした。`);
+        skippedCount++;
+      }
     }
   }
   
   if (deleteCount === 0) {
-    ui.alert('確認', '削除対象のCSV出力済みレコードはありませんでした。', ui.ButtonSet.OK);
+    let msg = '削除対象のレコードはありませんでした。';
+    if (skippedCount > 0) {
+      msg += `\n※ CSV出力済みフラグはあるものの「04.CSV出力済み」フォルダに存在しないレコードが ${skippedCount}件 スキップされました。`;
+    }
+    ui.alert('確認', msg, ui.ButtonSet.OK);
   } else {
-    ui.alert('処理完了', `${deleteCount}件のレコードを削除しました。`, ui.ButtonSet.OK);
+    let msg = `${deleteCount}件のレコードを削除しました。`;
+    if (skippedCount > 0) {
+      msg += `\n※ 「04.CSV出力済み」フォルダに存在しない ${skippedCount}件 はスキップされました。`;
+    }
+    ui.alert('処理完了', msg, ui.ButtonSet.OK);
   }
 }
 
