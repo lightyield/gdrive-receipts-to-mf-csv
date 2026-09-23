@@ -1,8 +1,8 @@
 /**
  * gdrive-receipts-to-mf-csv
  * 
- * Gmailに転送された領収書メールをGoogleドライブへ自動保存し、
- * スプレッドシート台帳をベースにリネームとマネーフォワード(MF)用CSVの出力を行います。
+ * Gmailに転送された領収書メールおよび手動アップロード領収書をGoogleドライブへ集約し、
+ * スプレッドシート台帳をベースにマネーフォワード(MF)用仕訳CSVの出力を行います。
  */
 
 // ==========================================
@@ -13,17 +13,20 @@ const TARGET_LABEL = '自動保存_処理待ち';
 const SUCCESS_LABEL = '自動保存_完了';
 
 // ==========================================
-// 1. Gmailから領収書を取得してスプレッドシートに登録
+// 1. Gmailから領収書を取得して「01.受付」に保存
 // ==========================================
 function importGmailReceipts() {
-  let gmailFolders;
+  let folders;
   try {
-    gmailFolders = getGmailFolders();
+    folders = getReceiptFolders();
   } catch (e) {
-    Logger.log('エラー: Gmailフォルダの取得に失敗しました。' + e.toString());
+    Logger.log('エラー: フォルダの取得に失敗しました。' + e.toString());
+    if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp.getActiveSpreadsheet()) {
+      SpreadsheetApp.getUi().alert('エラー', 'フォルダの取得に失敗しました:\n' + e.toString(), SpreadsheetApp.getUi().ButtonSet.OK);
+    }
     return;
   }
-  const folder = gmailFolders.queueFolder;
+  const folder = folders.inboxFolder;
   const targetLabelObj = GmailApp.getUserLabelByName(TARGET_LABEL);
   const successLabelObj = GmailApp.getUserLabelByName(SUCCESS_LABEL);
   
@@ -32,19 +35,16 @@ function importGmailReceipts() {
     return;
   }
   
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   const threads = targetLabelObj.getThreads(0, 30);
+  let savedFileCount = 0;
   
   for (let i = 0; i < threads.length; i++) {
     const messages = threads[i].getMessages();
     
     for (let j = 0; j < messages.length; j++) {
       const msg = messages[j];
-      const subject = msg.getSubject();
       const date = msg.getDate();
       const attachments = msg.getAttachments();
-      
-      const formattedDate = Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy/MM/dd');
       const timeStamp = Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
       
       if (attachments.length > 0) {
@@ -56,22 +56,8 @@ function importGmailReceipts() {
           }
           
           const tempName = `${timeStamp}_${file.getName()}`;
-          const newFile = folder.createFile(file.copyBlob()).setName(tempName);
-          
-          // スプレッドシートへ行追加
-          sheet.appendRow([
-            'Gmail', // A列: 取込経路
-            date,    // B列: 受信日時
-            formattedDate, // C列: 取引日付の初期値として受信日を設定
-            '', // D列: 勘定科目 (手動入力用)
-            '', // E列: 取引先名 (手動入力用)
-            '', // F列: 取引金額 (手動入力用)
-            '', // G列: メモ (手動入力用)
-            '', // H列: 数式により自動表示されるため空白
-            newFile.getId(), // I列: ファイルID
-            newFile.getUrl() // J列: 領収書リンク
-          ]);
-          setFilenameFormula(sheet);
+          folder.createFile(file.copyBlob()).setName(tempName);
+          savedFileCount++;
         }
       } else {
         // 【パターンB】本文PDF化
@@ -91,25 +77,11 @@ function importGmailReceipts() {
         
         // GoogleドキュメントからPDFを取得
         const pdfBlob = DriveApp.getFileById(tempDocId).getAs('application/pdf').setName(tempName);
-        const newFile = folder.createFile(pdfBlob);
+        folder.createFile(pdfBlob);
         
         // 一時ファイルの削除
         DriveApp.getFileById(tempDocId).setTrashed(true);
-        
-        // スプレッドシートへ行追加
-        sheet.appendRow([
-          'Gmail', // A列: 取込経路
-          date,    // B列: 受信日時
-          formattedDate, // C列: 取引日付
-          '', // D列: 勘定科目
-          '', // E列: 取引先名
-          '', // F列: 取引金額
-          '', // G列: メモ
-          '', // H列: ファイル名（数式により自動表示されるため空白）
-          newFile.getId(), // I列: ファイルID
-          newFile.getUrl() // J列: 領収書リンク
-        ]);
-        setFilenameFormula(sheet);
+        savedFileCount++;
       }
     }
     
@@ -117,36 +89,33 @@ function importGmailReceipts() {
     threads[i].addLabel(successLabelObj);
     threads[i].removeLabel(targetLabelObj);
   }
-}
-
-// H列にファイル名組み立て数式を設定するヘルパー関数
-function setFilenameFormula(sheet) {
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return;
-  // H列(8列目)に数式を挿入: YYYY.MM.DD_勘定科目_取引先名_取引金額円_メモ（メモが空なら末尾にアンダースコアを付けない）
-  const formula = `=TEXT(C${lastRow}, "yyyy.MM.dd")&"_"&D${lastRow}&"_"&E${lastRow}&"_"&F${lastRow}&"円"&IF(G${lastRow}<>"", "_"&G${lastRow}, "")`;
-  sheet.getRange(lastRow, 8).setFormula(formula);
   
-  // F列(6列目)に数値フォーマット（カンマ区切り）を適用
-  sheet.getRange(lastRow, 6).setNumberFormat("#,##0");
+  Logger.log(`Gmailから ${savedFileCount} 件のファイルを「01.受付」に保存しました。`);
+  try {
+    if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp.getActiveSpreadsheet()) {
+      SpreadsheetApp.getUi().alert('Gmail取込完了', `${threads.length}件のスレッドから ${savedFileCount}件 のファイルを「01.受付」フォルダに保存しました。`, SpreadsheetApp.getUi().ButtonSet.OK);
+    }
+  } catch (e) {
+    // トリガー実行等でUIがない場合は無視
+  }
 }
 
 // ==========================================
-// 1.5. 手動アップロードされた領収書を取得してスプレッドシートに登録
+// 2. 「02.リネーム済み」の領収書を取得してスプレッドシートに登録 ＆ 「03.インポート済み」へ移動
 // ==========================================
-function importManualReceipts() {
+function importRenamedReceipts() {
   let folders;
   try {
-    folders = getManualFolders();
+    folders = getReceiptFolders();
   } catch (e) {
     Logger.log('エラー: フォルダの取得に失敗しました。' + e.toString());
-    SpreadsheetApp.getUi().alert('エラー', '手動取込用フォルダの取得に失敗しました:\n' + e.toString(), SpreadsheetApp.getUi().ButtonSet.OK);
+    SpreadsheetApp.getUi().alert('エラー', '領収書フォルダの取得に失敗しました:\n' + e.toString(), SpreadsheetApp.getUi().ButtonSet.OK);
     return;
   }
 
-  const queueFolder = folders.queueFolder;
-  const doneFolder = folders.doneFolder;
-  const files = queueFolder.getFiles();
+  const renamedFolder = folders.renamedFolder;
+  const importedFolder = folders.importedFolder;
+  const files = renamedFolder.getFiles();
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
 
   let importedCount = 0;
@@ -183,256 +152,128 @@ function importManualReceipts() {
     const formattedDate = rawDate.replace(/(\d{4})(\d{2})(\d{2})/, '$1/$2/$3');
     
     try {
-      // ファイルを「処理済み」フォルダに移動
-      file.moveTo(doneFolder);
+      // ファイルを「03.インポート済み」フォルダに移動
+      file.moveTo(importedFolder);
       
-      // 統一ルール名でのリネーム（手動取り込み時点での確定名とする）
+      // 統一ルール名でのリネーム（正規化）
       const memoPart = memo ? `_${memo}` : '';
       const dotDate = formattedDate.replace(/\//g, '.');
       const newName = `${dotDate}_${category}_${vendor}_${amount}円${memoPart}${ext}`;
-      file.setName(newName);
+      if (originalName !== newName) {
+        file.setName(newName);
+      }
       
       // スプレッドシートへ行追加
-      // 列構成: 取込経路(A), 受信日時(B), 取引日付(C), 勘定科目(D), 取引先名(E), 取引金額(F), メモ(G), ファイル名(H), ファイルID(I), 領収書リンク(J)
+      // 列構成: 登録日時(A), 取引日付(B), 勘定科目(C), 取引先名(D), 取引金額(E), メモ(F), ファイル名(G), ファイルID(H), 領収書リンク(I), CSV出力(J)
       const now = new Date();
       sheet.appendRow([
-        '手動',           // 取込経路
-        now,             // 受信日時（取り込み日時）
+        now,             // 登録日時
         formattedDate,   // 取引日付
         category,        // 勘定科目
         vendor,          // 取引先名
         amount,          // 取引金額
         memo,            // メモ
-        newName,         // ファイル名 (最初から確定文字列を直接設定)
+        newName,         // ファイル名
         file.getId(),    // ファイルID
-        file.getUrl()    // 領収書リンク
+        file.getUrl(),   // 領収書リンク
+        ''               // CSV出力
       ]);
       
-      // F列(6列目)に数値フォーマット（カンマ区切り）を適用
+      // E列(5列目)に数値フォーマット（カンマ区切り）を適用
       const lastRow = sheet.getLastRow();
-      sheet.getRange(lastRow, 6).setNumberFormat("#,##0");
+      sheet.getRange(lastRow, 5).setNumberFormat("#,##0");
       
       importedCount++;
-      Logger.log(`取込成功: ${originalName} -> 処理済みへ移動`);
+      Logger.log(`取込成功: ${originalName} -> 03.インポート済みへ移動`);
       
     } catch (e) {
       Logger.log(`エラー: ファイル ${originalName} の処理中にエラーが発生しました: ` + e.toString());
     }
   }
   
-  let msg = `${importedCount}件の手動領収書を取り込みました。`;
+  let msg = `${importedCount}件のリネーム済み領収書を取り込みました。`;
   if (skippedCount > 0) {
-    msg += `\n※ 適合しないファイル名の画像等 ${skippedCount}件 をスキップしました（処理待ちフォルダに残されています）。`;
+    msg += `\n※ 適合しないファイル名の画像等 ${skippedCount}件 をスキップしました（02.リネーム済みフォルダに残されています）。`;
   }
   
-  SpreadsheetApp.getUi().alert('手動取込完了', msg, SpreadsheetApp.getUi().ButtonSet.OK);
+  SpreadsheetApp.getUi().alert('取込完了', msg, SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
-// 手動取込用のフォルダ（処理待ち・処理済み）を取得するヘルパー関数
-function getManualFolders() {
-  const manualQueueId = PropertiesService.getScriptProperties().getProperty('MANUAL_QUEUE_FOLDER_ID');
-  const manualDoneId = PropertiesService.getScriptProperties().getProperty('MANUAL_DONE_FOLDER_ID');
+// 領収書フォルダ（01.受付・02.リネーム済み・03.インポート済み・04.CSV出力済み）を取得するヘルパー関数
+function getReceiptFolders() {
+  const inboxId = PropertiesService.getScriptProperties().getProperty('INBOX_FOLDER_ID');
+  const renamedId = PropertiesService.getScriptProperties().getProperty('RENAMED_FOLDER_ID');
+  const importedId = PropertiesService.getScriptProperties().getProperty('IMPORTED_FOLDER_ID');
+  const exportedId = PropertiesService.getScriptProperties().getProperty('EXPORTED_FOLDER_ID');
 
-  let queueFolder = null;
-  let doneFolder = null;
+  let inboxFolder = null;
+  let renamedFolder = null;
+  let importedFolder = null;
+  let exportedFolder = null;
 
   // 1. スクリプトプロパティで個別に設定されている場合はそれを優先
-  if (manualQueueId) {
+  if (inboxId) {
     try {
-      queueFolder = DriveApp.getFolderById(manualQueueId);
+      inboxFolder = DriveApp.getFolderById(inboxId);
     } catch (e) {
-      Logger.log('警告: MANUAL_QUEUE_FOLDER_ID で指定されたフォルダの取得に失敗しました: ' + e.toString());
+      Logger.log('警告: INBOX_FOLDER_ID で指定されたフォルダの取得に失敗しました: ' + e.toString());
     }
   }
-  if (manualDoneId) {
+  if (renamedId) {
     try {
-      doneFolder = DriveApp.getFolderById(manualDoneId);
+      renamedFolder = DriveApp.getFolderById(renamedId);
     } catch (e) {
-      Logger.log('警告: MANUAL_DONE_FOLDER_ID で指定されたフォルダの取得に失敗しました: ' + e.toString());
+      Logger.log('警告: RENAMED_FOLDER_ID で指定されたフォルダの取得に失敗しました: ' + e.toString());
+    }
+  }
+  if (importedId) {
+    try {
+      importedFolder = DriveApp.getFolderById(importedId);
+    } catch (e) {
+      Logger.log('警告: IMPORTED_FOLDER_ID で指定されたフォルダの取得に失敗しました: ' + e.toString());
+    }
+  }
+  if (exportedId) {
+    try {
+      exportedFolder = DriveApp.getFolderById(exportedId);
+    } catch (e) {
+      Logger.log('警告: EXPORTED_FOLDER_ID で指定されたフォルダの取得に失敗しました: ' + e.toString());
     }
   }
 
-  // 2. 設定されていない場合は、FOLDER_ID から相対的に探索
-  if (!queueFolder || !doneFolder) {
+  // 2. 設定されていない場合は、FOLDER_ID から探索（存在しない場合は自動作成）
+  if (!inboxFolder || !renamedFolder || !importedFolder || !exportedFolder) {
     if (!FOLDER_ID) {
-      throw new Error('FOLDER_ID または MANUAL_QUEUE_FOLDER_ID / MANUAL_DONE_FOLDER_ID が設定されていません。');
+      throw new Error('FOLDER_ID または各フォルダIDが設定されていません。');
     }
     const parentFolder = DriveApp.getFolderById(FOLDER_ID);
-    const manualFolders = parentFolder.getFoldersByName('手動');
-    if (!manualFolders.hasNext()) {
-      throw new Error('親フォルダの下に「手動」フォルダが見つかりません。');
-    }
-    const manualFolder = manualFolders.next();
 
-    if (!queueFolder) {
-      const queueFolders = manualFolder.getFoldersByName('処理待ち');
-      if (!queueFolders.hasNext()) {
-        throw new Error('「手動」フォルダの下に「処理待ち」フォルダが見つかりません。');
-      }
-      queueFolder = queueFolders.next();
+    if (!inboxFolder) {
+      const inboxFolders = parentFolder.getFoldersByName('01.受付');
+      inboxFolder = inboxFolders.hasNext() ? inboxFolders.next() : parentFolder.createFolder('01.受付');
     }
 
-    if (!doneFolder) {
-      const doneFolders = manualFolder.getFoldersByName('処理済み');
-      if (!doneFolders.hasNext()) {
-        throw new Error('「手動」フォルダの下に「処理済み」フォルダが見つかりません。');
-      }
-      doneFolder = doneFolders.next();
+    if (!renamedFolder) {
+      const renamedFolders = parentFolder.getFoldersByName('02.リネーム済み');
+      renamedFolder = renamedFolders.hasNext() ? renamedFolders.next() : parentFolder.createFolder('02.リネーム済み');
     }
-  }
 
-  return { queueFolder, doneFolder };
-}
-
-// Gmail取込用のフォルダ（処理待ち・処理済み）を取得するヘルパー関数
-function getGmailFolders() {
-  const gmailQueueId = PropertiesService.getScriptProperties().getProperty('GMAIL_QUEUE_FOLDER_ID');
-  const gmailDoneId = PropertiesService.getScriptProperties().getProperty('GMAIL_DONE_FOLDER_ID');
-
-  let queueFolder = null;
-  let doneFolder = null;
-
-  // 1. スクリプトプロパティで個別に設定されている場合はそれを優先
-  if (gmailQueueId) {
-    try {
-      queueFolder = DriveApp.getFolderById(gmailQueueId);
-    } catch (e) {
-      Logger.log('警告: GMAIL_QUEUE_FOLDER_ID で指定されたフォルダの取得に失敗しました: ' + e.toString());
+    if (!importedFolder) {
+      const importedFolders = parentFolder.getFoldersByName('03.インポート済み');
+      importedFolder = importedFolders.hasNext() ? importedFolders.next() : parentFolder.createFolder('03.インポート済み');
     }
-  }
-  if (gmailDoneId) {
-    try {
-      doneFolder = DriveApp.getFolderById(gmailDoneId);
-    } catch (e) {
-      Logger.log('警告: GMAIL_DONE_FOLDER_ID で指定されたフォルダの取得に失敗しました: ' + e.toString());
+
+    if (!exportedFolder) {
+      const exportedFolders = parentFolder.getFoldersByName('04.CSV出力済み');
+      exportedFolder = exportedFolders.hasNext() ? exportedFolders.next() : parentFolder.createFolder('04.CSV出力済み');
     }
   }
 
-  // 2. 設定されていない場合は、FOLDER_ID から相対的に探索
-  if (!queueFolder || !doneFolder) {
-    if (!FOLDER_ID) {
-      throw new Error('FOLDER_ID または GMAIL_QUEUE_FOLDER_ID / GMAIL_DONE_FOLDER_ID が設定されていません。');
-    }
-    const parentFolder = DriveApp.getFolderById(FOLDER_ID);
-    const gmailFolders = parentFolder.getFoldersByName('Gmail');
-    if (!gmailFolders.hasNext()) {
-      throw new Error('親フォルダの下に「Gmail」フォルダが見つかりません。');
-    }
-    const gmailFolder = gmailFolders.next();
-
-    if (!queueFolder) {
-      const queueFolders = gmailFolder.getFoldersByName('処理待ち');
-      if (!queueFolders.hasNext()) {
-        throw new Error('「Gmail」フォルダの下に「処理待ち」フォルダが見つかりません。');
-      }
-      queueFolder = queueFolders.next();
-    }
-
-    if (!doneFolder) {
-      const doneFolders = gmailFolder.getFoldersByName('処理済み');
-      if (!doneFolders.hasNext()) {
-        throw new Error('「Gmail」フォルダの下に「処理済み」フォルダが見つかりません。');
-      }
-      doneFolder = doneFolders.next();
-    }
-  }
-
-  return { queueFolder, doneFolder };
+  return { inboxFolder, renamedFolder, importedFolder, exportedFolder };
 }
 
 // ==========================================
-// 2. 「Gmail未処理」データをリネーム ＆ 処理済みへ移動
-// ==========================================
-function renameGmailReceipts() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  const dataRange = sheet.getDataRange();
-  const values = dataRange.getValues();
-  
-  let gmailFolders;
-  try {
-    gmailFolders = getGmailFolders();
-  } catch (e) {
-    Logger.log('エラー: Gmailフォルダの取得に失敗しました。' + e.toString());
-    SpreadsheetApp.getUi().alert('エラー', 'Gmailフォルダの取得に失敗しました:\n' + e.toString(), SpreadsheetApp.getUi().ButtonSet.OK);
-    return;
-  }
-  
-  let processedCount = 0;
-  
-  // 2行目からループ
-  for (let i = 1; i < values.length; i++) {
-    const row = values[i];
-    
-    // H列(8列目)のセルを取得し、数式が入っているか確認する
-    const cellRange = sheet.getRange(i + 1, 8);
-    const hasFormula = cellRange.getFormula() !== "";
-    
-    // A列(取込経路)が「Gmail」かつ H列(8列目)に数式が入っている行（＝Gmail未処理の行）を対象とする
-    const sourcePath = row[0]; // A列: 取込経路
-    if (sourcePath === 'Gmail' && hasFormula) {
-      const rowNum = i + 1;
-      const rawDate = row[2]; // C列: 取引日付
-      const debit = row[3];   // D列: 勘定科目
-      const vendor = row[4];  // E列: 取引先名
-      const amount = row[5];  // F列: 取引金額
-      const fileId = row[8];  // I列: ファイルID
-      
-      if (!fileId) continue;
-      
-      // 必須項目のいずれかが空の場合はエラーで止める
-      if (!rawDate || !debit || !vendor || amount === '') {
-        const errorMsg = `行 ${rowNum}: 必須情報（取引日付、勘定科目、取引先名、取引金額）が不足しています。すべての項目を入力してから再度実行してください。`;
-        Logger.log(errorMsg);
-        SpreadsheetApp.getUi().alert('入力エラー', errorMsg, SpreadsheetApp.getUi().ButtonSet.OK);
-        return;
-      }
-      
-      try {
-        const file = DriveApp.getFileById(fileId);
-        
-        // ファイルの親フォルダを確認し、Gmail処理待ちに存在する場合のみ処理
-        const parents = file.getParents();
-        if (parents.hasNext()) {
-          const parent = parents.next();
-          if (parent.getId() === gmailFolders.queueFolder.getId()) {
-            // Gmail/処理済み フォルダに移動
-            file.moveTo(gmailFolders.doneFolder);
-            
-            // リネーム
-            const originalName = file.getName();
-            const extMatch = originalName.match(/\.[^.]+$/);
-            const ext = extMatch ? extMatch[0] : '';
-            
-            const dateObj = new Date(rawDate);
-            const dotDate = Utilities.formatDate(dateObj, Session.getScriptTimeZone(), 'yyyy.MM.dd');
-            
-            const memoVal = row[6]; // G列: メモ
-            const memoPart = memoVal ? `_${memoVal}` : '';
-            const newName = `${dotDate}_${debit}_${vendor}_${amount}円${memoPart}${ext}`;
-            
-            file.setName(newName);
-            
-            // G列（ファイル名）に実際のファイル名を上書き設定（数式を上書きして完了フラグとする）
-            cellRange.setValue(newName);
-            processedCount++;
-            Logger.log(`行 ${rowNum}: リネーム完了 -> ${newName}`);
-          }
-        }
-      } catch (e) {
-        Logger.log(`行 ${rowNum} の処理中にエラーが発生しました: ` + e.toString());
-      }
-    }
-  }
-  
-  if (processedCount === 0) {
-    SpreadsheetApp.getUi().alert('確認', 'リネーム対象のGmail未処理データがありませんでした。', SpreadsheetApp.getUi().ButtonSet.OK);
-  } else {
-    SpreadsheetApp.getUi().alert('処理完了', `${processedCount}件のGmail領収書をリネームし、処理済みへ移動しました。`, SpreadsheetApp.getUi().ButtonSet.OK);
-  }
-}
-
-// ==========================================
-// 2.5. 「リネーム済み」データをマネーフォワードCSVに出力
+// 3. 「リネーム済み」データをマネーフォワードCSVに出力 ＆ 「04.CSV出力済み」へ実ファイルを移動
 // ==========================================
 function exportMFSheetsCSV() {
   if (!FOLDER_ID) {
@@ -440,30 +281,38 @@ function exportMFSheetsCSV() {
     SpreadsheetApp.getUi().alert('エラー', 'スクリプトのプロパティに FOLDER_ID が設定されていません。プロジェクトの設定から設定してください。', SpreadsheetApp.getUi().ButtonSet.OK);
     return;
   }
+  let folders;
+  try {
+    folders = getReceiptFolders();
+  } catch (e) {
+    Logger.log('エラー: フォルダの取得に失敗しました。' + e.toString());
+    SpreadsheetApp.getUi().alert('エラー', 'フォルダの取得に失敗しました:\n' + e.toString(), SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   const dataRange = sheet.getDataRange();
   const values = dataRange.getValues();
   
-  const folder = DriveApp.getFolderById(FOLDER_ID);
+  const parentFolder = DriveApp.getFolderById(FOLDER_ID);
+  const exportedFolder = folders.exportedFolder;
   
   const exportRows = [];
-  const todayStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy/MM/dd');
   
   for (let i = 1; i < values.length; i++) {
     const row = values[i];
     const rowNum = i + 1;
     
-    const cellRange = sheet.getRange(rowNum, 8);
-    const hasFormula = cellRange.getFormula() !== "";
-    const fileNameVal = row[7]; // H列: ファイル名
-    const csvStatus = row[10] || ""; // K列: CSV出力ステータス（11列目）
+    const fileNameVal = row[6]; // G列: ファイル名 (7列目)
+    const fileId = row[7];      // H列: ファイルID (8列目)
+    const csvStatus = row[9] || ""; // J列: CSV出力ステータス (10列目)
     
-    // H列に値が入っており（＝数式ではない＝リネーム・手動取込完了）、かつK列（CSV出力）が空であるものを対象とする
-    if (!hasFormula && fileNameVal && csvStatus === "") {
-      const rawDate = row[2]; // C列: 取引日付
-      const debit = row[3];   // D列: 勘定科目
-      const vendor = row[4];  // E列: 取引先名
-      const amount = row[5];  // F列: 取引金額
+    // G列にファイル名が入っており、かつJ列（CSV出力）が空である行を対象とする
+    if (fileNameVal && csvStatus === "") {
+      const rawDate = row[1]; // B列: 取引日付
+      const debit = row[2];   // C列: 勘定科目
+      const vendor = row[3];  // D列: 取引先名
+      const amount = row[4];  // E列: 取引金額
       
       // 必須項目のバリデーション
       if (!rawDate || !debit || !vendor || amount === '') {
@@ -479,7 +328,8 @@ function exportMFSheetsCSV() {
         debit: debit,
         vendor: vendor,
         amount: amount,
-        memo: row[6] // G列: メモ
+        memo: row[5], // F列: メモ
+        fileId: fileId
       });
     }
   }
@@ -542,17 +392,27 @@ function exportMFSheetsCSV() {
     const blob = Utilities.newBlob(csvContent, 'text/csv', csvFileName);
     const sjisBlob = blob.getAs('text/csv').setDataFromString(csvContent, 'Shift_JIS');
     
-    // GoogleドライブにCSVを保存
-    const csvFile = folder.createFile(sjisBlob);
+    // Googleドライブ親フォルダにCSVを保存
+    const csvFile = parentFolder.createFile(sjisBlob);
     
-    // 対象行 of K列にCSVファイル名を書き込む
+    // 対象行のJ列にCSVファイル名を書き込み ＆ 実ファイルを「04.CSV出力済み」フォルダへ移動
     for (let i = 0; i < exportRows.length; i++) {
-      sheet.getRange(exportRows[i].rowNum, 11).setValue(csvFileName);
+      const item = exportRows[i];
+      sheet.getRange(item.rowNum, 10).setValue(csvFileName);
+      
+      if (item.fileId) {
+        try {
+          const file = DriveApp.getFileById(item.fileId);
+          file.moveTo(exportedFolder);
+        } catch (e) {
+          Logger.log(`警告: ファイルID ${item.fileId} の「04.CSV出力済み」フォルダへの移動に失敗しました: ` + e.toString());
+        }
+      }
     }
     
     SpreadsheetApp.getUi().alert(
       '出力完了', 
-      `${exportRows.length}件のデータをマネーフォワード用CSVとして出力し、J列（CSV出力状況）を更新しました。\n\nCSVファイルURL:\n${csvFile.getUrl()}`, 
+      `${exportRows.length}件のデータをマネーフォワード用CSVとして出力し、対象ファイルを「04.CSV出力済み」へ移動しました。\n\nCSVファイルURL:\n${csvFile.getUrl()}`, 
       SpreadsheetApp.getUi().ButtonSet.OK
     );
   } catch (e) {
@@ -562,16 +422,27 @@ function exportMFSheetsCSV() {
 }
 
 // ==========================================
-// 2.7. 「CSV出力済み」レコードを一括削除
+// 4. 「CSV出力済み」レコードを一括削除（04.CSV出力済みフォルダ内のファイルのみ対象）
 // ==========================================
 function deleteExportedReceipts() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   const ui = SpreadsheetApp.getUi();
   
+  let folders;
+  try {
+    folders = getReceiptFolders();
+  } catch (e) {
+    Logger.log('エラー: フォルダの取得に失敗しました。' + e.toString());
+    ui.alert('エラー', 'フォルダの取得に失敗しました:\n' + e.toString(), ui.ButtonSet.OK);
+    return;
+  }
+  
+  const exportedFolderId = folders.exportedFolder.getId();
+  
   // ユーザーに確認
   const response = ui.alert(
     '確認',
-    'CSV出力済みのレコードを削除しますか？\n（Googleドライブ上の実ファイルは削除されません）',
+    '「04.CSV出力済み」フォルダに移動完了しているレコードを台帳から削除しますか？\n（Googleドライブ上の実ファイルは削除されません）',
     ui.ButtonSet.YES_NO
   );
   
@@ -582,35 +453,65 @@ function deleteExportedReceipts() {
   const dataRange = sheet.getDataRange();
   const values = dataRange.getValues();
   let deleteCount = 0;
+  let skippedCount = 0;
   
   // スプレッドシートの行削除による行ずれを防ぐため、下からループを回す
   // 2行目 (インデックス 1) までループ
   for (let i = values.length - 1; i >= 1; i--) {
     const rowNum = i + 1;
-    const csvStatus = values[i][10] || ""; // K列: CSV出力
+    const fileId = values[i][7];          // H列: ファイルID (8列目)
+    const csvStatus = values[i][9] || ""; // J列: CSV出力 (10列目)
     
     if (csvStatus !== "") {
-      sheet.deleteRow(rowNum);
-      deleteCount++;
+      let isInOutFolder = false;
+      if (fileId) {
+        try {
+          const file = DriveApp.getFileById(fileId);
+          const parents = file.getParents();
+          while (parents.hasNext()) {
+            if (parents.next().getId() === exportedFolderId) {
+              isInOutFolder = true;
+              break;
+            }
+          }
+        } catch (e) {
+          Logger.log(`警告: 行 ${rowNum} のファイル取得に失敗しました: ` + e.toString());
+        }
+      }
+      
+      if (isInOutFolder) {
+        sheet.deleteRow(rowNum);
+        deleteCount++;
+      } else {
+        Logger.log(`スキップ: 行 ${rowNum} のファイルは「04.CSV出力済み」フォルダに存在しないため削除しませんでした。`);
+        skippedCount++;
+      }
     }
   }
   
   if (deleteCount === 0) {
-    ui.alert('確認', '削除対象のCSV出力済みレコードはありませんでした。', ui.ButtonSet.OK);
+    let msg = '削除対象のレコードはありませんでした。';
+    if (skippedCount > 0) {
+      msg += `\n※ CSV出力済みフラグはあるものの「04.CSV出力済み」フォルダに存在しないレコードが ${skippedCount}件 スキップされました。`;
+    }
+    ui.alert('確認', msg, ui.ButtonSet.OK);
   } else {
-    ui.alert('処理完了', `${deleteCount}件のレコードを削除しました。`, ui.ButtonSet.OK);
+    let msg = `${deleteCount}件のレコードを削除しました。`;
+    if (skippedCount > 0) {
+      msg += `\n※ 「04.CSV出力済み」フォルダに存在しない ${skippedCount}件 はスキップされました。`;
+    }
+    ui.alert('処理完了', msg, ui.ButtonSet.OK);
   }
 }
 
 // ==========================================
-// 3. スプレッドシートメニューの追加
+// 5. スプレッドシートメニューの追加
 // ==========================================
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   ui.createMenu('領収書管理')
     .addItem('Gmailから領収書を取得', 'importGmailReceipts')
-    .addItem('Gmail未処理データのリネーム', 'renameGmailReceipts')
-    .addItem('手動アップロード領収書を取込', 'importManualReceipts')
+    .addItem('リネーム済み領収書の取込', 'importRenamedReceipts')
     .addItem('MFクラウド会計向けCSV出力', 'exportMFSheetsCSV')
     .addItem('CSV出力済みレコードを削除', 'deleteExportedReceipts')
     .addSeparator()
@@ -619,7 +520,7 @@ function onOpen() {
 }
 
 // ==========================================
-// 4. 勘定科目プルダウンの設定
+// 6. 勘定科目プルダウン ＆ 集計シートの初期設定
 // ==========================================
 function setupCategoryValidation() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
@@ -637,8 +538,8 @@ function setupCategoryValidation() {
     '租税公課'
   ];
   
-  // D列（D2以降のデータ入力範囲として、D2:D1000 を設定）
-  const range = sheet.getRange("D2:D1000");
+  // C列（C2以降のデータ入力範囲として、C2:C1000 を設定）
+  const range = sheet.getRange("C2:C1000");
   
   // データの入力規則を作成
   const rule = SpreadsheetApp.newDataValidation()
@@ -649,32 +550,18 @@ function setupCategoryValidation() {
   
   range.setDataValidation(rule);
   
-  // F列（取引金額）の数値フォーマット設定（カンマ区切り）
-  sheet.getRange("F2:F1000").setNumberFormat("#,##0");
+  // E列（取引金額）の数値フォーマット設定（カンマ区切り）
+  sheet.getRange("E2:E1000").setNumberFormat("#,##0");
   
-  // ヘッダー（A1:K1）の一括設定・更新
+  // ヘッダー（A1:J1）の一括設定・更新
   const headers = [
-    ["取込経路", "受信日時", "取引日付", "勘定科目", "取引先名", "取引金額", "メモ", "ファイル名", "ファイルID", "領収書リンク", "CSV出力"]
+    ["登録日時", "取引日付", "勘定科目", "取引先名", "取引金額", "メモ", "ファイル名", "ファイルID", "領収書リンク", "CSV出力"]
   ];
-  sheet.getRange("A1:K1").setValues(headers);
-  sheet.getRange("A1:K1").setHorizontalAlignment("left");
-  
-  // H列（ファイル名）の古い数式のアップデート（未処理の数式セルが対象）
-  const lastRow = sheet.getLastRow();
-  if (lastRow >= 2) {
-    const formulas = sheet.getRange(2, 8, lastRow - 1, 1).getFormulas();
-    for (let i = 0; i < formulas.length; i++) {
-      const rowNum = i + 2;
-      // 数式が入っている行のみアップデート
-      if (formulas[i][0] !== "") {
-        const formula = `=TEXT(C${rowNum}, "yyyy.MM.dd")&"_"&D${rowNum}&"_"&E${rowNum}&"_"&F${rowNum}&"円"&IF(G${rowNum}<>"", "_"&G${rowNum}, "")`;
-        sheet.getRange(rowNum, 8).setFormula(formula);
-      }
-    }
-  }
+  sheet.getRange("A1:J1").setValues(headers);
+  sheet.getRange("A1:J1").setHorizontalAlignment("left");
   
   // ==========================================
-  // 5. 別シート「集計」の作成・自動設定
+  // 別シート「集計」の作成・自動設定（勘定科目別集計）
   // ==========================================
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const dataSheetName = sheet.getName();
@@ -687,27 +574,27 @@ function setupCategoryValidation() {
   summarySheet.clear();
   
   // タイトル
-  summarySheet.getRange("A1").setValue("取込経路別集計").setFontSize(14).setFontWeight("bold");
+  summarySheet.getRange("A1").setValue("勘定科目別集計").setFontSize(14).setFontWeight("bold");
   
   // ヘッダー
-  summarySheet.getRange("A3:C3").setValues([["取込経路", "件数", "合計金額"]]);
+  summarySheet.getRange("A3:C3").setValues([["勘定科目", "件数", "合計金額"]]);
   summarySheet.getRange("A3:C3").setFontWeight("bold").setBackground("#e6f2ff").setHorizontalAlignment("left");
   
-  // Gmail集計
-  summarySheet.getRange("A4").setValue("Gmail");
-  summarySheet.getRange("B4").setFormula(`=COUNTIF('${dataSheetName}'!A2:A, "Gmail")`).setNumberFormat('#,##0"件"');
-  summarySheet.getRange("C4").setFormula(`=SUMIF('${dataSheetName}'!A2:A, "Gmail", '${dataSheetName}'!F2:F)`).setNumberFormat('#,##0"円"');
-  
-  // 手動集計
-  summarySheet.getRange("A5").setValue("手動");
-  summarySheet.getRange("B5").setFormula(`=COUNTIF('${dataSheetName}'!A2:A, "手動")`).setNumberFormat('#,##0"件"');
-  summarySheet.getRange("C5").setFormula(`=SUMIF('${dataSheetName}'!A2:A, "手動", '${dataSheetName}'!F2:F)`).setNumberFormat('#,##0"円"');
+  // 各勘定科目の集計行設定
+  for (let i = 0; i < categories.length; i++) {
+    const cat = categories[i];
+    const rowNum = i + 4;
+    summarySheet.getRange(`A${rowNum}`).setValue(cat);
+    summarySheet.getRange(`B${rowNum}`).setFormula(`=COUNTIF('${dataSheetName}'!C2:C, "${cat}")`).setNumberFormat('#,##0"件"');
+    summarySheet.getRange(`C${rowNum}`).setFormula(`=SUMIF('${dataSheetName}'!C2:C, "${cat}", '${dataSheetName}'!E2:E)`).setNumberFormat('#,##0"円"');
+  }
   
   // 総合計
-  summarySheet.getRange("A6").setValue("総合計");
-  summarySheet.getRange("B6").setFormula("=SUM(B4:B5)").setNumberFormat('#,##0"件"');
-  summarySheet.getRange("C6").setFormula("=SUM(C4:C5)").setNumberFormat('#,##0"円"');
-  summarySheet.getRange("A6:C6").setFontWeight("bold");
+  const totalRowNum = categories.length + 4;
+  summarySheet.getRange(`A${totalRowNum}`).setValue("総合計");
+  summarySheet.getRange(`B${totalRowNum}`).setFormula(`=SUM(B4:B${totalRowNum - 1})`).setNumberFormat('#,##0"件"');
+  summarySheet.getRange(`C${totalRowNum}`).setFormula(`=SUM(C4:C${totalRowNum - 1})`).setNumberFormat('#,##0"円"');
+  summarySheet.getRange(`A${totalRowNum}:C${totalRowNum}`).setFontWeight("bold");
   
   // 幅調整
   summarySheet.autoResizeColumn(1);
@@ -716,7 +603,7 @@ function setupCategoryValidation() {
   
   SpreadsheetApp.getUi().alert(
     '設定・修復完了', 
-    'A1:K1のヘッダー再設定、D列のプルダウン設定、F列の金額フォーマット（カンマ区切り）の設定、H列の未処理ファイル名数式のアップデート、および「集計」シートの作成・更新が完了しました。', 
+    'A1:J1のヘッダー再設定、C列のプルダウン設定、E列の金額フォーマット（カンマ区切り）の設定、および「集計」シート（勘定科目別集計）の作成・更新が完了しました。', 
     SpreadsheetApp.getUi().ButtonSet.OK
   );
 }
