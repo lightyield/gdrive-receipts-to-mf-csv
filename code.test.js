@@ -287,20 +287,23 @@ describe('code.js テストスイート（ワークフロー一本化・4フォ�
     expect(mockFile.moveTo).toHaveBeenCalledWith(mockExportedFolder);
   });
 
-  test('setupCategoryValidation() - A1:J1にヘッダーがセットされ、C列(3)にプルダウン、E列(5)に金額フォーマット、集計シートが設定されること', () => {
+  test('setupCategoryValidation() - A1:J1にヘッダーがセットされ、不要な列の入力規則がクリアされ、C列(3)にプルダウン、E列(5)に金額フォーマット、集計シートが設定されること', () => {
     const mockRangeHeader = { setValues: jest.fn(), setHorizontalAlignment: jest.fn() };
     const mockRangeValidation = { setDataValidation: jest.fn() };
     const mockRangeFormat = { setNumberFormat: jest.fn() };
+    const mockRangeClear = { clearDataValidations: jest.fn() };
 
     mockSheet.getRange = jest.fn().mockImplementation((arg1) => {
       if (arg1 === 'A1:J1') return mockRangeHeader;
       if (arg1 === 'C2:C1000') return mockRangeValidation;
       if (arg1 === 'E2:E1000') return mockRangeFormat;
+      if (arg1 === 'A2:B1000' || arg1 === 'D2:J1000') return mockRangeClear;
       return {};
     });
 
     setupCategoryValidation();
 
+    expect(mockRangeClear.clearDataValidations).toHaveBeenCalledTimes(2);
     expect(mockRangeHeader.setValues).toHaveBeenCalledWith([
       ["登録日時", "取引日付", "勘定科目", "取引先名", "取引金額", "メモ", "ファイル名", "ファイルID", "領収書リンク", "CSV出力"]
     ]);

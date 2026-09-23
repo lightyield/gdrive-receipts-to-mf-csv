@@ -538,6 +538,10 @@ function setupCategoryValidation() {
     '租税公課'
   ];
   
+  // 既存の入力規則をクリア（旧D列の勘定科目プルダウン残り等の解消）
+  sheet.getRange("A2:B1000").clearDataValidations();
+  sheet.getRange("D2:J1000").clearDataValidations();
+  
   // C列（C2以降のデータ入力範囲として、C2:C1000 を設定）
   const range = sheet.getRange("C2:C1000");
   
