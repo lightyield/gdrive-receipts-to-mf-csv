@@ -199,6 +199,184 @@ function importRenamedReceipts() {
   SpreadsheetApp.getUi().alert('取込完了', msg, SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
+// ==========================================
+// 固定経費シートの初期設定（固定経費マスター管理用）
+// ==========================================
+function setupFixedExpensesSheet(ss) {
+  const spreadsheet = ss || SpreadsheetApp.getActiveSpreadsheet();
+  let masterSheet = spreadsheet.getSheetByName('固定経費');
+  
+  if (!masterSheet) {
+    masterSheet = spreadsheet.insertSheet('固定経費');
+  }
+  
+  // シートが空の場合のみヘッダーと書式を設定
+  if (masterSheet.getLastRow() === 0) {
+    const headers = [['勘定科目', '取引先名', '取引金額', '発生日', 'メモ']];
+    masterSheet.getRange('A1:E1').setValues(headers);
+    masterSheet.getRange('A1:E1').setFontWeight('bold').setBackground('#e6f2ff').setHorizontalAlignment('left');
+    masterSheet.getRange('C2:C100').setNumberFormat('#,##0');
+    masterSheet.autoResizeColumn(1);
+    masterSheet.autoResizeColumn(2);
+    masterSheet.autoResizeColumn(3);
+    masterSheet.autoResizeColumn(4);
+    masterSheet.autoResizeColumn(5);
+  }
+  
+  return masterSheet;
+}
+
+/**
+ * 経費計上期間（前月26日〜今月25日）に基づいて、指定された発生日ルールから取引日付を計算する
+ * @param {string|number} dayRule '毎月1日', '毎月2日', '毎月末', 1, 12 など
+ * @param {Date} [baseDate] 基準日（省略時は現在日時）
+ * @return {string} YYYY/MM/DD 形式の日付文字列
+ */
+function calculateFixedExpenseDate(dayRule, baseDate) {
+  const base = baseDate || new Date();
+  const year = base.getFullYear();
+  const month = base.getMonth() + 1; // 1-12
+  const ruleStr = String(dayRule || '').trim();
+  
+  if (ruleStr.indexOf('末') !== -1) {
+    // 計上期間（前月26日〜今月25日）における「月末」は前月末日
+    const prevMonthEnd = new Date(year, month - 1, 0);
+    const y = prevMonthEnd.getFullYear();
+    const m = String(prevMonthEnd.getMonth() + 1).padStart(2, '0');
+    const d = String(prevMonthEnd.getDate()).padStart(2, '0');
+    return `${y}/${m}/${d}`;
+  } else {
+    // '毎月1日', '毎月2日', '12' などの指定日（当月）
+    const match = ruleStr.match(/\d+/);
+    const day = match ? parseInt(match[0], 10) : 1;
+    const y = year;
+    const m = String(month).padStart(2, '0');
+    const d = String(day).padStart(2, '0');
+    return `${y}/${m}/${d}`;
+  }
+}
+
+// ==========================================
+// 2.5 固定経費の一括追加（スプレッドシート「固定経費」シートから一括記帳）
+// ==========================================
+function addFixedExpenses() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getActiveSheet();
+  const ui = SpreadsheetApp.getUi();
+  
+  let masterSheet = ss.getSheetByName('固定経費');
+  if (!masterSheet) {
+    masterSheet = setupFixedExpensesSheet(ss);
+    ui.alert(
+      '固定経費シートを作成しました',
+      '「固定経費」シートを作成しました。勘定科目、取引先名、取引金額、発生日、メモを入力した上で、再度「固定経費の一括追加」を実行してください。',
+      ui.ButtonSet.OK
+    );
+    return;
+  }
+  
+  const masterValues = masterSheet.getDataRange().getValues();
+  if (masterValues.length <= 1) {
+    ui.alert(
+      '固定経費データがありません',
+      '「固定経費」シートに取引データが登録されていません。2行目以降に設定を入力してから再度実行してください。',
+      ui.ButtonSet.OK
+    );
+    return;
+  }
+  
+  const now = new Date();
+  const dataRange = sheet.getDataRange();
+  const values = dataRange.getValues();
+  
+  let addedCount = 0;
+  let skippedCount = 0;
+  
+  for (let i = 1; i < masterValues.length; i++) {
+    const row = masterValues[i];
+    const category = String(row[0] || '').trim();
+    const vendor = String(row[1] || '').trim();
+    const amountVal = row[2];
+    const dayRule = row[3];
+    const memo = String(row[4] || '').trim();
+    
+    // 必須項目（勘定科目、取引先名、金額、発生日）のチェック
+    if (!category || !vendor || amountVal === '' || amountVal === null || dayRule === '' || dayRule === null) {
+      continue;
+    }
+    
+    const amount = Number(String(amountVal).replace(/,/g, ''));
+    if (isNaN(amount) || amount === 0) {
+      continue;
+    }
+    
+    const targetDate = calculateFixedExpenseDate(dayRule, now);
+    
+    // 重複チェック: 同じ取引日付(B列), 勘定科目(C列), 取引先名(D列), 金額(E列) でCSV出力未完了(J列が空)のレコードが既にあるか判定
+    let isDuplicate = false;
+    for (let r = 1; r < values.length; r++) {
+      let existingDate = '';
+      if (values[r][1] instanceof Date) {
+        existingDate = Utilities.formatDate(values[r][1], Session.getScriptTimeZone(), 'yyyy/MM/dd');
+      } else if (values[r][1]) {
+        existingDate = String(values[r][1]).trim().replace(/-/g, '/');
+      }
+      
+      const existingCategory = String(values[r][2] || '').trim();
+      const existingVendor = String(values[r][3] || '').trim();
+      const existingAmount = Number(String(values[r][4]).replace(/,/g, '')) || 0;
+      const existingCsv = String(values[r][9] || '').trim();
+      
+      if (existingCsv === '' &&
+          existingDate === targetDate &&
+          existingCategory === category &&
+          existingVendor === vendor &&
+          existingAmount === amount) {
+        isDuplicate = true;
+        break;
+      }
+    }
+    
+    if (isDuplicate) {
+      Logger.log(`スキップ（重複）: ${targetDate} ${vendor} ${amount}円`);
+      skippedCount++;
+      continue;
+    }
+    
+    // スプレッドシートへ行追加
+    // 列構成: 登録日時(A), 取引日付(B), 勘定科目(C), 取引先名(D), 取引金額(E), メモ(F), ファイル名(G), ファイルID(H), 領収書リンク(I), CSV出力(J)
+    sheet.appendRow([
+      now,            // 登録日時
+      targetDate,     // 取引日付
+      category,       // 勘定科目
+      vendor,         // 取引先名
+      amount,         // 取引金額
+      memo,           // メモ
+      '固定経費',      // ファイル名（CSV出力対象とするため）
+      '',             // ファイルID（実ファイルなし）
+      '',             // 領収書リンク
+      ''              // CSV出力
+    ]);
+    
+    // 金額列に数値フォーマット適用
+    const lastRow = sheet.getLastRow();
+    sheet.getRange(lastRow, 5).setNumberFormat("#,##0");
+    addedCount++;
+  }
+  
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const periodText = `計上期間: ${prevMonth}月26日〜${month}月25日`;
+  
+  let msg = `${addedCount}件の固定経費を台帳に追加しました。\n（${periodText}）`;
+  if (skippedCount > 0) {
+    msg += `\n※ すでに追加済みの固定経費 ${skippedCount}件 をスキップしました。`;
+  }
+  
+  ui.alert('追加完了', msg, ui.ButtonSet.OK);
+}
+
 // 領収書フォルダ（01.受付・02.リネーム済み・03.インポート済み・04.CSV出力済み）を取得するヘルパー関数
 function getReceiptFolders() {
   const inboxId = PropertiesService.getScriptProperties().getProperty('INBOX_FOLDER_ID');
@@ -463,23 +641,26 @@ function deleteExportedReceipts() {
     const csvStatus = values[i][9] || ""; // J列: CSV出力 (10列目)
     
     if (csvStatus !== "") {
-      let isInOutFolder = false;
+      let shouldDelete = false;
       if (fileId) {
         try {
           const file = DriveApp.getFileById(fileId);
           const parents = file.getParents();
           while (parents.hasNext()) {
             if (parents.next().getId() === exportedFolderId) {
-              isInOutFolder = true;
+              shouldDelete = true;
               break;
             }
           }
         } catch (e) {
           Logger.log(`警告: 行 ${rowNum} のファイル取得に失敗しました: ` + e.toString());
         }
+      } else {
+        // ファイルIDがないレコード（固定経費等）は、CSV出力済みであれば削除対象とする
+        shouldDelete = true;
       }
       
-      if (isInOutFolder) {
+      if (shouldDelete) {
         sheet.deleteRow(rowNum);
         deleteCount++;
       } else {
@@ -512,6 +693,7 @@ function onOpen() {
   ui.createMenu('領収書管理')
     .addItem('Gmailから領収書を取得', 'importGmailReceipts')
     .addItem('リネーム済み領収書の取込', 'importRenamedReceipts')
+    .addItem('固定経費の一括追加', 'addFixedExpenses')
     .addItem('MFクラウド会計向けCSV出力', 'exportMFSheetsCSV')
     .addItem('CSV出力済みレコードを削除', 'deleteExportedReceipts')
     .addSeparator()
@@ -605,9 +787,12 @@ function setupCategoryValidation() {
   summarySheet.autoResizeColumn(2);
   summarySheet.autoResizeColumn(3);
   
+  // 固定経費シートの初期設定
+  setupFixedExpensesSheet(ss);
+  
   SpreadsheetApp.getUi().alert(
     '設定・修復完了', 
-    'A1:J1のヘッダー再設定、C列のプルダウン設定、E列の金額フォーマット（カンマ区切り）の設定、および「集計」シート（勘定科目別集計）の作成・更新が完了しました。', 
+    'A1:J1のヘッダー再設定、C列のプルダウン設定、E列の金額フォーマット（カンマ区切り）の設定、および「集計」シート・「固定経費」シートの作成・更新が完了しました。', 
     SpreadsheetApp.getUi().ButtonSet.OK
   );
 }
