@@ -11,6 +11,7 @@
 const FOLDER_ID = PropertiesService.getScriptProperties().getProperty('FOLDER_ID');
 const TARGET_LABEL = '自動保存_処理待ち';
 const SUCCESS_LABEL = '自動保存_完了';
+const RECEIPT_SHEET_NAME = '領収書';
 
 // ==========================================
 // 1. Gmailから領収書を取得して「01.受付」に保存
@@ -116,7 +117,7 @@ function importRenamedReceipts() {
   const renamedFolder = folders.renamedFolder;
   const importedFolder = folders.importedFolder;
   const files = renamedFolder.getFiles();
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const sheet = getReceiptDataSheet();
 
   let importedCount = 0;
   let skippedCount = 0;
@@ -257,11 +258,52 @@ function calculateFixedExpenseDate(dayRule, baseDate) {
 }
 
 // ==========================================
+// 台帳（データ入力）シートを安全に取得するヘルパー関数
+// 「固定経費」や「集計」シートが開かれていても、常に「領収書」シートを安全に取得・特定する
+// ※「シート1」が存在し「領収書」が存在しない場合は自動的に「領収書」へリネーム
+// ==========================================
+function getReceiptDataSheet(ss) {
+  const spreadsheet = ss || SpreadsheetApp.getActiveSpreadsheet();
+  
+  // 1. 指定の台帳シート名（'領収書'）を探索
+  const receiptSheet = spreadsheet.getSheetByName(RECEIPT_SHEET_NAME);
+  if (receiptSheet) {
+    return receiptSheet;
+  }
+  
+  // 2. 'シート1' が存在する場合は '領収書' に自動リネーム
+  const sheet1 = spreadsheet.getSheetByName('シート1');
+  if (sheet1) {
+    sheet1.setName(RECEIPT_SHEET_NAME);
+    return sheet1;
+  }
+  
+  // 3. アクティブシートが固定経費や集計以外であればそれを優先
+  const activeSheet = spreadsheet.getActiveSheet();
+  if (activeSheet) {
+    const activeName = activeSheet.getName();
+    if (activeName !== '固定経費' && activeName !== '集計') {
+      return activeSheet;
+    }
+  }
+  
+  // 4. それ以外の場合は、'固定経費'・'集計' 以外の最初のシートを返す
+  const sheets = spreadsheet.getSheets();
+  for (let i = 0; i < sheets.length; i++) {
+    const name = sheets[i].getName();
+    if (name !== '固定経費' && name !== '集計') {
+      return sheets[i];
+    }
+  }
+  return sheets[0];
+}
+
+// ==========================================
 // 2.5 固定経費の一括追加（スプレッドシート「固定経費」シートから一括記帳）
 // ==========================================
 function addFixedExpenses() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getActiveSheet();
+  const sheet = getReceiptDataSheet(ss);
   const ui = SpreadsheetApp.getUi();
   
   let masterSheet = ss.getSheetByName('固定経費');
@@ -273,6 +315,11 @@ function addFixedExpenses() {
       ui.ButtonSet.OK
     );
     return;
+  }
+  
+  // 「固定経費」シートに誤って追記された台帳データ（7行目以降）が存在する場合は自動削除してお掃除
+  if (masterSheet.getLastRow() > 6) {
+    masterSheet.deleteRows(7, masterSheet.getLastRow() - 6);
   }
   
   const masterValues = masterSheet.getDataRange().getValues();
@@ -468,7 +515,7 @@ function exportMFSheetsCSV() {
     return;
   }
 
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const sheet = getReceiptDataSheet();
   const dataRange = sheet.getDataRange();
   const values = dataRange.getValues();
   
@@ -603,7 +650,7 @@ function exportMFSheetsCSV() {
 // 4. 「CSV出力済み」レコードを一括削除（04.CSV出力済みフォルダ内のファイルのみ対象）
 // ==========================================
 function deleteExportedReceipts() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const sheet = getReceiptDataSheet();
   const ui = SpreadsheetApp.getUi();
   
   let folders;
@@ -705,7 +752,7 @@ function onOpen() {
 // 6. 勘定科目プルダウン ＆ 集計シートの初期設定
 // ==========================================
 function setupCategoryValidation() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const sheet = getReceiptDataSheet();
   
   // ユーザー指定の勘定科目リスト
   const categories = [
