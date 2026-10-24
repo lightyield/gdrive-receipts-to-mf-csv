@@ -381,6 +381,19 @@ describe('code.js テストスイート（ワークフロー一本化・4フォ�
     expect(mockSummarySheet.autoResizeColumn).toHaveBeenCalledWith(1);
   });
 
+  test('setupCategoryValidation() - 「領収書」シートがなく「シート1」が存在する場合、「領収書」にリネームされること', () => {
+    mockSpreadsheet.getSheetByName = jest.fn().mockImplementation(name => {
+      if (name === 'シート1') return mockSheet;
+      if (name === '固定経費') return mockFixedExpensesSheet;
+      if (name === '集計') return mockSummarySheet;
+      return null;
+    });
+
+    setupCategoryValidation();
+
+    expect(mockSheet.setName).toHaveBeenCalledWith('領収書');
+  });
+
   describe('deleteExportedReceipts() テスト', () => {
     test('ユーザーが「いいえ」を選択した場合、削除が実行されないこと', () => {
       mockUi.alert.mockReturnValue('NO'); // ui.Button.NO
@@ -626,7 +639,7 @@ describe('code.js テストスイート（ワークフロー一本化・4フォ�
       expect(sheet).toBe(mockSheet);
     });
 
-    test('「領収書」がなく「シート1」が存在する場合は「領収書」に自動リネームして返すこと', () => {
+    test('「領収書」がなく「シート1」が存在する場合はリネームせず「シート1」を返すこと', () => {
       mockSpreadsheet.getSheetByName = jest.fn().mockImplementation(name => {
         if (name === 'シート1') return mockSheet;
         return null;
@@ -634,7 +647,7 @@ describe('code.js テストスイート（ワークフロー一本化・4フォ�
 
       const sheet = getReceiptDataSheet(mockSpreadsheet);
       expect(sheet).toBe(mockSheet);
-      expect(mockSheet.setName).toHaveBeenCalledWith('領収書');
+      expect(mockSheet.setName).not.toHaveBeenCalled();
     });
 
     test('アクティブシートが固定経費や集計の場合でも、領収書シートが正しく特定されること', () => {

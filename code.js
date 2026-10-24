@@ -260,7 +260,6 @@ function calculateFixedExpenseDate(dayRule, baseDate) {
 // ==========================================
 // 台帳（データ入力）シートを安全に取得するヘルパー関数
 // 「固定経費」や「集計」シートが開かれていても、常に「領収書」シートを安全に取得・特定する
-// ※「シート1」が存在し「領収書」が存在しない場合は自動的に「領収書」へリネーム
 // ==========================================
 function getReceiptDataSheet(ss) {
   const spreadsheet = ss || SpreadsheetApp.getActiveSpreadsheet();
@@ -271,10 +270,9 @@ function getReceiptDataSheet(ss) {
     return receiptSheet;
   }
   
-  // 2. 'シート1' が存在する場合は '領収書' に自動リネーム
+  // 2. 'シート1' が存在する場合はそれを返す
   const sheet1 = spreadsheet.getSheetByName('シート1');
   if (sheet1) {
-    sheet1.setName(RECEIPT_SHEET_NAME);
     return sheet1;
   }
   
@@ -752,7 +750,17 @@ function onOpen() {
 // 6. 勘定科目プルダウン ＆ 集計シートの初期設定
 // ==========================================
 function setupCategoryValidation() {
-  const sheet = getReceiptDataSheet();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(RECEIPT_SHEET_NAME);
+  if (!sheet) {
+    const sheet1 = ss.getSheetByName('シート1');
+    if (sheet1) {
+      sheet1.setName(RECEIPT_SHEET_NAME);
+      sheet = sheet1;
+    } else {
+      sheet = getReceiptDataSheet(ss);
+    }
+  }
   
   // ユーザー指定の勘定科目リスト
   const categories = [
@@ -796,7 +804,6 @@ function setupCategoryValidation() {
   // ==========================================
   // 別シート「集計」の作成・自動設定（勘定科目別集計）
   // ==========================================
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
   const dataSheetName = sheet.getName();
   
   let summarySheet = ss.getSheetByName("集計");
@@ -839,7 +846,7 @@ function setupCategoryValidation() {
   
   SpreadsheetApp.getUi().alert(
     '設定・修復完了', 
-    'A1:J1のヘッダー再設定、C列のプルダウン設定、E列の金額フォーマット（カンマ区切り）の設定、および「集計」シート・「固定経費」シートの作成・更新が完了しました。', 
+    '台帳シート名を「領収書」に設定、A1:J1のヘッダー再設定、C列のプルダウン設定、E列の金額フォーマット（カンマ区切り）の設定、および「集計」シート・「固定経費」シートの作成・更新が完了しました。', 
     SpreadsheetApp.getUi().ButtonSet.OK
   );
 }
