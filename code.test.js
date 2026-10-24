@@ -104,6 +104,22 @@ const mockSummarySheet = {
   autoResizeColumn: jest.fn()
 };
 
+const mockFixedExpensesSheet = {
+  getLastRow: jest.fn().mockReturnValue(6),
+  getRange: jest.fn().mockReturnValue(mockRangeSummary),
+  autoResizeColumn: jest.fn(),
+  getDataRange: jest.fn().mockReturnValue({
+    getValues: jest.fn().mockReturnValue([
+      ['勘定科目', '取引先名', '取引金額', '発生日', 'メモ'],
+      ['新聞図書費', 'サンプル出版A', 1000, '毎月1日', 'メルマガ代'],
+      ['新聞図書費', 'サンプル出版B', 880, '毎月末', 'メルマガ代'],
+      ['通信費', 'サンプル通信', 5000, '毎月12日', ''],
+      ['車両費', 'サンプル車両', 35000, '毎月2日', 'プライベート兼用のため折半'],
+      ['旅費交通費', 'サンプル交通', 15000, '毎月末', '定期代']
+    ])
+  })
+};
+
 mockSheet = {
   getName: jest.fn().mockReturnValue('シート1'),
   appendRow: jest.fn(),
@@ -129,8 +145,14 @@ mockSheet = {
 
 mockSpreadsheet = {
   getActiveSheet: jest.fn().mockReturnValue(mockSheet),
-  getSheetByName: jest.fn().mockReturnValue(mockSummarySheet),
-  insertSheet: jest.fn().mockReturnValue(mockSummarySheet)
+  getSheetByName: jest.fn().mockImplementation(name => {
+    if (name === '固定経費') return mockFixedExpensesSheet;
+    return mockSummarySheet;
+  }),
+  insertSheet: jest.fn().mockImplementation(name => {
+    if (name === '固定経費') return mockFixedExpensesSheet;
+    return mockSummarySheet;
+  })
 };
 
 mockGmailMessages = [{
@@ -151,10 +173,17 @@ mockGmailThreads = [{
   removeLabel: jest.fn()
 }];
 
+const mockMenu = {
+  addItem: jest.fn().mockReturnThis(),
+  addSeparator: jest.fn().mockReturnThis(),
+  addToUi: jest.fn().mockReturnThis()
+};
+
 mockUi = {
   alert: jest.fn(),
   ButtonSet: { OK: 'OK', YES_NO: 'YES_NO' },
-  Button: { YES: 'YES', NO: 'NO' }
+  Button: { YES: 'YES', NO: 'NO' },
+  createMenu: jest.fn().mockReturnValue(mockMenu)
 };
 
 global.Logger = { log: jest.fn() };
@@ -287,7 +316,35 @@ describe('code.js テストスイート（ワークフロー一本化・4フォ�
     expect(mockFile.moveTo).toHaveBeenCalledWith(mockExportedFolder);
   });
 
-  test('setupCategoryValidation() - A1:J1にヘッダーがセットされ、不要な列の入力規則がクリアされ、C列(3)にプルダウン、E列(5)に金額フォーマット、集計シートが設定されること', () => {
+  test('exportMFSheetsCSV() - 実ファイルIDがない固定経費レコードも正しくCSV出力対象となり、ファイル移動なしでステータス更新されること', () => {
+    const mockStatusRange = { setValue: jest.fn() };
+    mockSheet.getRange = jest.fn().mockImplementation((row, col) => {
+      if (row === 2 && col === 10) return mockStatusRange;
+      return {};
+    });
+
+    mockSheet.getDataRange = jest.fn().mockReturnValue({
+      getValues: jest.fn().mockReturnValue([
+        ['登録日時', '取引日付', '勘定科目', '取引先名', '取引金額', 'メモ', 'ファイル名', 'ファイルID', '領収書リンク', 'CSV出力'],
+        [new Date(), '2026/10/01', '新聞図書費', 'サンプル出版A', 1000, 'メルマガ代', '固定経費', '', '', '']
+      ])
+    });
+
+    exportMFSheetsCSV();
+
+    expect(mockSheet.getRange).toHaveBeenCalledWith(2, 10);
+    expect(mockStatusRange.setValue).toHaveBeenCalledWith(expect.stringContaining('mf_journal_'));
+    expect(mockParentFolder.createFile).toHaveBeenCalled();
+    // ファイル移動は呼ばれないこと
+    expect(mockFile.moveTo).not.toHaveBeenCalled();
+    expect(mockUi.alert).toHaveBeenCalledWith(
+      '出力完了',
+      expect.stringContaining('1件のデータをマネーフォワード用CSVとして出力'),
+      'OK'
+    );
+  });
+
+  test('setupCategoryValidation() - A1:J1にヘッダーがセットされ、不要な列の入力規則がクリアされ、C列(3)にプルダウン、E列(5)に金額フォーマット、集計シート・固定経費シートが設定されること', () => {
     const mockRangeHeader = { setValues: jest.fn(), setHorizontalAlignment: jest.fn() };
     const mockRangeValidation = { setDataValidation: jest.fn() };
     const mockRangeFormat = { setNumberFormat: jest.fn() };
@@ -311,6 +368,7 @@ describe('code.js テストスイート（ワークフロー一本化・4フォ�
     expect(mockRangeFormat.setNumberFormat).toHaveBeenCalledWith('#,##0');
 
     expect(mockSpreadsheet.getSheetByName).toHaveBeenCalledWith("集計");
+    expect(mockSpreadsheet.getSheetByName).toHaveBeenCalledWith("固定経費");
     expect(mockSummarySheet.clear).toHaveBeenCalled();
     expect(mockSummarySheet.getRange).toHaveBeenCalledWith("A1");
     expect(mockRangeSummary.setValue).toHaveBeenCalledWith("勘定科目別集計");
@@ -377,5 +435,186 @@ describe('code.js テストスイート（ワークフロー一本化・4フォ�
         'OK'
       );
     });
+
+    test('実ファイルIDがないレコード（固定経費等）も、CSV出力済みであれば削除対象となること', () => {
+      mockUi.alert.mockReturnValue('YES');
+
+      mockSheet.getDataRange = jest.fn().mockReturnValue({
+        getValues: jest.fn().mockReturnValue([
+          ['登録日時', '取引日付', '勘定科目', '取引先名', '取引金額', 'メモ', 'ファイル名', 'ファイルID', '領収書リンク', 'CSV出力'],
+          [new Date(), '2026/10/01', '新聞図書費', 'サンプル出版A', 1000, 'メルマガ代', '固定経費', '', '', 'mf_journal_1.csv'],
+          [new Date(), '2026/10/02', '車両費', 'サンプル車両', 35000, 'プライベート兼用のため折半', '固定経費', '', '', '']
+        ])
+      });
+
+      deleteExportedReceipts();
+
+      // 2行目（固定経費でCSV出力済み）のみ削除されること
+      expect(mockSheet.deleteRow).toHaveBeenCalledTimes(1);
+      expect(mockSheet.deleteRow).toHaveBeenCalledWith(2);
+      expect(mockUi.alert).toHaveBeenLastCalledWith(
+        '処理完了',
+        expect.stringContaining('1件のレコードを削除しました。'),
+        'OK'
+      );
+    });
+  });
+
+  describe('固定経費の一括追加機能テスト', () => {
+    test('calculateFixedExpenseDate() - 計上期間（前月26日〜今月25日）に基づく正しい取引日付が計算されること', () => {
+      const baseDate = new Date('2026-10-24T12:00:00Z');
+
+      expect(calculateFixedExpenseDate('毎月1日', baseDate)).toBe('2026/10/01');
+      expect(calculateFixedExpenseDate('毎月2日', baseDate)).toBe('2026/10/02');
+      expect(calculateFixedExpenseDate('毎月12日', baseDate)).toBe('2026/10/12');
+      expect(calculateFixedExpenseDate('毎月末', baseDate)).toBe('2026/09/30');
+
+      // 年跨ぎ（1月実行時）のテスト
+      const janDate = new Date('2026-01-15T12:00:00Z');
+      expect(calculateFixedExpenseDate('毎月1日', janDate)).toBe('2026/01/01');
+      expect(calculateFixedExpenseDate('毎月末', janDate)).toBe('2025/12/31');
+    });
+
+    test('addFixedExpenses() - 固定経費シートにデータが存在しない場合はアラートが表示されること', () => {
+      mockFixedExpensesSheet.getDataRange = jest.fn().mockReturnValue({
+        getValues: jest.fn().mockReturnValue([
+          ['勘定科目', '取引先名', '取引金額', '発生日', 'メモ']
+        ])
+      });
+
+      addFixedExpenses();
+
+      expect(mockUi.alert).toHaveBeenCalledWith(
+        '固定経費データがありません',
+        expect.stringContaining('「固定経費」シートに取引データが登録されていません'),
+        'OK'
+      );
+      expect(mockSheet.appendRow).not.toHaveBeenCalled();
+    });
+
+    test('addFixedExpenses() - 「固定経費」シートの5件の取引が正しい項目・値で追加されること', () => {
+      const mockFormatRange = { setNumberFormat: jest.fn() };
+      mockSheet.getRange = jest.fn().mockReturnValue(mockFormatRange);
+      mockSheet.appendRow = jest.fn();
+      mockSheet.getLastRow = jest.fn().mockReturnValue(2);
+
+      // 固定経費シートのモックデータを再設定
+      mockFixedExpensesSheet.getDataRange = jest.fn().mockReturnValue({
+        getValues: jest.fn().mockReturnValue([
+          ['勘定科目', '取引先名', '取引金額', '発生日', 'メモ'],
+          ['新聞図書費', 'サンプル出版A', 1000, '毎月1日', 'メルマガ代'],
+          ['新聞図書費', 'サンプル出版B', 880, '毎月末', 'メルマガ代'],
+          ['通信費', 'サンプル通信', 5000, '毎月12日', ''],
+          ['車両費', 'サンプル車両', 35000, '毎月2日', 'プライベート兼用のため折半'],
+          ['旅費交通費', 'サンプル交通', 15000, '毎月末', '定期代']
+        ])
+      });
+
+      // 台帳がヘッダーのみ（既存取引なし）の状態
+      mockSheet.getDataRange = jest.fn().mockReturnValue({
+        getValues: jest.fn().mockReturnValue([
+          ['登録日時', '取引日付', '勘定科目', '取引先名', '取引金額', 'メモ', 'ファイル名', 'ファイルID', '領収書リンク', 'CSV出力']
+        ])
+      });
+
+      addFixedExpenses();
+
+      // 5件追加されること
+      expect(mockSheet.appendRow).toHaveBeenCalledTimes(5);
+
+      const addedRows = mockSheet.appendRow.mock.calls.map(call => call[0]);
+
+      // 1. 新聞図書費: サンプル出版A
+      const pubA = addedRows.find(r => r[3] === 'サンプル出版A');
+      expect(pubA).toBeDefined();
+      expect(pubA[2]).toBe('新聞図書費');
+      expect(pubA[4]).toBe(1000);
+      expect(pubA[5]).toBe('メルマガ代');
+      expect(pubA[6]).toBe('固定経費');
+
+      // 2. 新聞図書費: サンプル出版B
+      const pubB = addedRows.find(r => r[3] === 'サンプル出版B');
+      expect(pubB).toBeDefined();
+      expect(pubB[2]).toBe('新聞図書費');
+      expect(pubB[4]).toBe(880);
+      expect(pubB[5]).toBe('メルマガ代');
+
+      // 3. 車両費: サンプル車両
+      const car = addedRows.find(r => r[3] === 'サンプル車両');
+      expect(car).toBeDefined();
+      expect(car[2]).toBe('車両費');
+      expect(car[4]).toBe(35000);
+      expect(car[5]).toBe('プライベート兼用のため折半');
+
+      // 4. 通信費: サンプル通信
+      const comm = addedRows.find(r => r[3] === 'サンプル通信');
+      expect(comm).toBeDefined();
+      expect(comm[2]).toBe('通信費');
+      expect(comm[4]).toBe(5000);
+      expect(comm[5]).toBe('');
+
+      // 5. 旅費交通費: サンプル交通
+      const train = addedRows.find(r => r[3] === 'サンプル交通');
+      expect(train).toBeDefined();
+      expect(train[2]).toBe('旅費交通費');
+      expect(train[4]).toBe(15000);
+      expect(train[5]).toBe('定期代');
+
+      // 金額フォーマット設定が各行に対して呼ばれること
+      expect(mockFormatRange.setNumberFormat).toHaveBeenCalledWith('#,##0');
+
+      // 完了ダイアログの確認
+      expect(mockUi.alert).toHaveBeenCalledWith(
+        '追加完了',
+        expect.stringContaining('5件の固定経費を台帳に追加しました。'),
+        'OK'
+      );
+    });
+
+    test('addFixedExpenses() - 既に台帳に追加済みの固定経費がある場合はスキップされること（二重登録防止）', () => {
+      mockSheet.appendRow = jest.fn();
+
+      // 現在の固定経費と同じ取引日の日付を算出
+      const now = new Date();
+      const pubADate = calculateFixedExpenseDate('毎月1日', now);
+
+      mockFixedExpensesSheet.getDataRange = jest.fn().mockReturnValue({
+        getValues: jest.fn().mockReturnValue([
+          ['勘定科目', '取引先名', '取引金額', '発生日', 'メモ'],
+          ['新聞図書費', 'サンプル出版A', 1000, '毎月1日', 'メルマガ代'],
+          ['新聞図書費', 'サンプル出版B', 880, '毎月末', 'メルマガ代']
+        ])
+      });
+
+      mockSheet.getDataRange = jest.fn().mockReturnValue({
+        getValues: jest.fn().mockReturnValue([
+          ['登録日時', '取引日付', '勘定科目', '取引先名', '取引金額', 'メモ', 'ファイル名', 'ファイルID', '領収書リンク', 'CSV出力'],
+          // すでにサンプル出版Aが未出力で存在
+          [new Date(), pubADate, '新聞図書費', 'サンプル出版A', 1000, 'メルマガ代', '固定経費', '', '', '']
+        ])
+      });
+
+      addFixedExpenses();
+
+      // サンプル出版Aがスキップされ、サンプル出版Bのみ追加されること
+      expect(mockSheet.appendRow).toHaveBeenCalledTimes(1);
+      expect(mockUi.alert).toHaveBeenCalledWith(
+        '追加完了',
+        expect.stringContaining('1件の固定経費を台帳に追加しました。'),
+        'OK'
+      );
+      expect(mockUi.alert).toHaveBeenCalledWith(
+        '追加完了',
+        expect.stringContaining('すでに追加済みの固定経費 1件 をスキップしました。'),
+        'OK'
+      );
+    });
+  });
+
+  test('onOpen() - メニューに「固定経費の一括追加」が含まれていること', () => {
+    onOpen();
+    expect(mockUi.createMenu).toHaveBeenCalledWith('領収書管理');
+    expect(mockMenu.addItem).toHaveBeenCalledWith('固定経費の一括追加', 'addFixedExpenses');
+    expect(mockMenu.addToUi).toHaveBeenCalled();
   });
 });
