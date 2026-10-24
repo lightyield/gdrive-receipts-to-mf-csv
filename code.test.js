@@ -122,6 +122,7 @@ const mockFixedExpensesSheet = {
 
 mockSheet = {
   getName: jest.fn().mockReturnValue('シート1'),
+  setName: jest.fn().mockReturnThis(),
   appendRow: jest.fn(),
   getLastRow: jest.fn().mockReturnValue(2),
   deleteRow: jest.fn(),
@@ -145,9 +146,12 @@ mockSheet = {
 
 mockSpreadsheet = {
   getActiveSheet: jest.fn().mockReturnValue(mockSheet),
+  getSheets: jest.fn().mockReturnValue([mockSheet, mockSummarySheet, mockFixedExpensesSheet]),
   getSheetByName: jest.fn().mockImplementation(name => {
     if (name === '固定経費') return mockFixedExpensesSheet;
-    return mockSummarySheet;
+    if (name === '集計') return mockSummarySheet;
+    if (name === '領収書' || name === 'シート1') return mockSheet;
+    return null;
   }),
   insertSheet: jest.fn().mockImplementation(name => {
     if (name === '固定経費') return mockFixedExpensesSheet;
@@ -608,6 +612,41 @@ describe('code.js テストスイート（ワークフロー一本化・4フォ�
         expect.stringContaining('すでに追加済みの固定経費 1件 をスキップしました。'),
         'OK'
       );
+    });
+  });
+
+  describe('getReceiptDataSheet() テスト', () => {
+    test('「領収書」シートが存在する場合はそれを返すこと', () => {
+      mockSpreadsheet.getSheetByName = jest.fn().mockImplementation(name => {
+        if (name === '領収書') return mockSheet;
+        return null;
+      });
+
+      const sheet = getReceiptDataSheet(mockSpreadsheet);
+      expect(sheet).toBe(mockSheet);
+    });
+
+    test('「領収書」がなく「シート1」が存在する場合は「領収書」に自動リネームして返すこと', () => {
+      mockSpreadsheet.getSheetByName = jest.fn().mockImplementation(name => {
+        if (name === 'シート1') return mockSheet;
+        return null;
+      });
+
+      const sheet = getReceiptDataSheet(mockSpreadsheet);
+      expect(sheet).toBe(mockSheet);
+      expect(mockSheet.setName).toHaveBeenCalledWith('領収書');
+    });
+
+    test('アクティブシートが固定経費や集計の場合でも、領収書シートが正しく特定されること', () => {
+      mockSpreadsheet.getActiveSheet = jest.fn().mockReturnValue(mockFixedExpensesSheet);
+      mockSpreadsheet.getSheetByName = jest.fn().mockImplementation(name => {
+        if (name === '領収書') return mockSheet;
+        if (name === '固定経費') return mockFixedExpensesSheet;
+        return null;
+      });
+
+      const sheet = getReceiptDataSheet(mockSpreadsheet);
+      expect(sheet).toBe(mockSheet);
     });
   });
 
